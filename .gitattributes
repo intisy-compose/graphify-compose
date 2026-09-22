@@ -1,0 +1,2 @@
+# Normalize to LF; PowerShell and Python are happy with LF on Windows.
+* text=auto eol=lf

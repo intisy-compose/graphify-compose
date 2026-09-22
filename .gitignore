@@ -1,0 +1,23 @@
+# Secrets — the graphify API key
+.env
+api-key.txt
+
+# Python virtualenv
+venv/
+
+# External build source (the graphify server repo, cloned separately — see README)
+repo/
+
+# Generated graph output (built by the host-side watcher)
+graphify-out/
+
+# Runtime watcher state and logs
+.watchers/
+healthcheck.log
+
+# Compiled helper binary (obtained separately)
+bin/
+
+# Python cache
+__pycache__/
+*.pyc
