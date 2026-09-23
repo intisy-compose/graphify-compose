@@ -15,7 +15,7 @@
   that legitimately delete code).
 
 .EXAMPLE
-  .\regraph.ps1 F:\Documents\GitHub\javascript\my-project
+  .\regraph.ps1 C:\projects\my-project
 #>
 [CmdletBinding()]
 param(

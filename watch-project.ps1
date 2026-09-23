@@ -11,7 +11,7 @@
   Absolute path to the project folder to keep watched.
 
 .EXAMPLE
-  .\watch-project.ps1 F:\Documents\GitHub\javascript\my-project
+  .\watch-project.ps1 C:\projects\my-project
 #>
 [CmdletBinding()]
 param(

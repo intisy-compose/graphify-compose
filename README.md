@@ -43,8 +43,8 @@ Copy `.env.example` to `.env` (gitignored) and set:
 
 `hooks/session-start.py` and `hooks/session-end.py` are Claude Code session hooks
 that graph and watch whichever project you open, ref-counted so multiple sessions
-share one watcher. They resolve their own location automatically; set
-`GRAPHIFY_PROJECTS_ROOT` if your projects live outside the default root. The
+share one watcher. They resolve their own location automatically and only act on projects under
+`PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). The
 `watch-*.ps1` scripts drive the watcher directly on Windows.
 
 ## License
