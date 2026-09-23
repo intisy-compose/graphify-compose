@@ -4,7 +4,7 @@
 When a Claude Code session starts in a project under the GitHub root, this ensures
 that project has a graph and launches a detached `graphify watch` for it, so the
 graph rebuilds on every save and the MCP server hot-reloads it. Idempotent and
-refcounted: multiple sessions in the same project share one watcher. Fast — it only
+refcounted: multiple sessions in the same project share one watcher. Fast - it only
 spawns a background process and returns; the build/watch happens detached. Exits 0
 on anything unexpected so it never blocks session startup.
 """
@@ -18,7 +18,21 @@ import urllib.error
 import urllib.request
 
 GRAPHIFY_DIR = os.environ.get("GRAPHIFY_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GITHUB_ROOT = os.environ.get("GRAPHIFY_PROJECTS_ROOT", r"F:\Documents\GitHub")
+
+
+def read_env_file_value(key):
+    try:
+        with open(os.path.join(GRAPHIFY_DIR, ".env"), encoding="utf-8") as env_file:
+            for line in env_file:
+                name, separator, value = line.strip().partition("=")
+                if separator and name.strip() == key:
+                    return value.strip().strip('"')
+    except OSError:
+        pass
+    return None
+
+
+GITHUB_ROOT = os.environ.get("GRAPHIFY_PROJECTS_ROOT") or read_env_file_value("PROJECTS_ROOT")
 RUNNER = os.path.join(GRAPHIFY_DIR, "watch-runner.ps1")
 STATE_DIR = os.path.join(GRAPHIFY_DIR, ".watchers")
 MCP_URL = "http://localhost:8770/mcp"
@@ -41,6 +55,8 @@ def read_cwd():
 
 
 def is_project(cwd):
+    if not GITHUB_ROOT:
+        return False
     norm = os.path.normcase(os.path.abspath(cwd))
     if not norm.startswith(os.path.normcase(GITHUB_ROOT) + os.sep):
         return False
@@ -115,7 +131,7 @@ def _log_heal(message):
 def heal_graphify():
     """Restart the graphify containers if Docker's host->container port proxy has
     dropped (the container stays "Up" but the MCP is unreachable on the host). Any
-    HTTP response — including the expected 401 (auth required) — means healthy. Runs
+    HTTP response - including the expected 401 (auth required) - means healthy. Runs
     on every session start regardless of cwd. OS-independent: urllib + the docker CLI."""
     try:
         urllib.request.urlopen(MCP_URL, timeout=5)

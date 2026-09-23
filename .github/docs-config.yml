@@ -1,0 +1,2 @@
+kind: generic
+description: "A Docker stack that runs a [graphify](https://github.com/Graphify-Labs/graphify) knowledge-graph MCP server plus a static web explorer over every project under a chosen root, so any project with a `graphify-out/graph.json` is queryable and browsable without per-project configuration."

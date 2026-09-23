@@ -9,7 +9,7 @@
   Stop every watcher.
 
 .EXAMPLE
-  .\watch-stop.ps1 F:\Documents\GitHub\javascript\my-project
+  .\watch-stop.ps1 C:\projects\my-project
 .EXAMPLE
   .\watch-stop.ps1 -All
 #>
