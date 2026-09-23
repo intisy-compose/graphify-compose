@@ -40,9 +40,10 @@ function Show-Urls {
 }
 
 $usage = @{
-    "up"          = "Build and start the stack (default)"
+    "up"          = "Start the stack, building the image only if it is missing (default)"
     "down"        = "Stop and remove everything"
-    "restart"     = "Rebuild and recreate the stack"
+    "restart"     = "Recreate the stack from the current image"
+    "rebuild"     = "Rebuild the image from repo/ and recreate the stack"
     "logs"        = "Follow logs"
     "regraph"     = "<path> [-Force]  rebuild the default graph from a code folder"
     "watch"       = "<path>  pin a persistent auto-watcher on a project"
@@ -57,9 +58,10 @@ if ($helpers.ContainsKey($Command.ToLower())) { Invoke-Helper $helpers[$Command.
 Set-Location $PSScriptRoot
 
 switch ($Command.ToLower()) {
-    "up"      { Assert-Setup; Write-Step "Starting graphify..."; docker compose up -d --build; Show-Urls; break }
+    "up"      { Assert-Setup; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
     "down"    { Write-Step "Stopping everything..."; docker compose down; break }
-    "restart" { Assert-Setup; Write-Step "Recreating..."; docker compose up -d --build --force-recreate; Show-Urls; break }
+    "restart" { Assert-Setup; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
+    "rebuild" { Assert-Setup; Write-Step "Rebuilding..."; docker compose up -d --build --force-recreate; Show-Urls; break }
     "logs"    { docker compose logs -f; break }
     default   { Show-Usage -Commands $usage; exit 1 }
 }
