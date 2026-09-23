@@ -1,10 +1,3 @@
-# graphify-compose
-
-A Docker stack that runs a [graphify](https://github.com/Graphify-Labs/graphify)
-knowledge-graph MCP server plus a static web explorer over every project under a
-chosen root, so any project with a `graphify-out/graph.json` is queryable and
-browsable without per-project configuration.
-
 - **graphify** - MCP server on `:8770`; serves any project via `project_path` and
   hot-reloads `graph.json` when it changes.
 - **graphify-web** - static server on `:8771` for the interactive `graph.html`
@@ -46,7 +39,3 @@ that graph and watch whichever project you open, ref-counted so multiple session
 share one watcher. They resolve their own location automatically and only act on projects under
 `PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). The
 `watch-*.ps1` scripts drive the watcher directly on Windows.
-
-## License
-
-MIT - see [LICENSE](LICENSE).
