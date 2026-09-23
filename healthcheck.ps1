@@ -5,7 +5,7 @@
 .DESCRIPTION
   The container can stay "Up" while Docker's WSL2 port proxy silently stops forwarding,
   leaving the MCP unreachable on the host (curl returns 000 / empty reply). This pings
-  the endpoint; a real HTTP status (401 expected — auth required) means healthy, while
+  the endpoint; a real HTTP status (401 expected - auth required) means healthy, while
   no response means the proxy dropped, and it restarts the containers to rebuild it.
   Meant to run unattended from a Scheduled Task every few minutes.
 #>

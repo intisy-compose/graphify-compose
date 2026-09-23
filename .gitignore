@@ -1,11 +1,11 @@
-# Secrets — the graphify API key
+# Local config and secrets (copy .env from .env.example)
 .env
 api-key.txt
 
 # Python virtualenv
 venv/
 
-# External build source (the graphify server repo, cloned separately — see README)
+# External build source (the graphify server repo, cloned separately - see README)
 repo/
 
 # Generated graph output (built by the host-side watcher)
