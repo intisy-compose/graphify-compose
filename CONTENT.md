@@ -16,7 +16,8 @@ cd graphify-compose
 git clone https://github.com/Graphify-Labs/graphify repo
 cp .env.example .env    # then edit: set GRAPHIFY_API_KEY and PROJECTS_ROOT
 
-docker compose up -d --build
+# Launcher (up | down | restart | logs): docker-compose.ps1 or .bat on Windows, .sh elsewhere
+./docker-compose.sh up
 ```
 
 - MCP endpoint: `http://localhost:8770/mcp`
