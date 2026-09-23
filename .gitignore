@@ -5,7 +5,7 @@ api-key.txt
 # Python virtualenv
 venv/
 
-# External build source (the graphify server repo, cloned separately - see README)
+# Former manual build source; the build now fetches a pinned commit itself, so it can be deleted
 repo/
 
 # Generated graph output (built by the host-side watcher)

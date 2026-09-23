@@ -8,7 +8,10 @@ services:
   graphify:
     image: graphify-server:latest
     build:
-      context: ./repo   # cloned https://github.com/Graphify-Labs/graphify (holds the Dockerfile)
+      context: ./image
+      additional_contexts:
+        # Pinned to the version the host-side watcher venv runs; change it only through `relock`.
+        graphify-source: https://github.com/Graphify-Labs/graphify.git#f5d50adbd003dba310f4111c24e3d67c3a5ba141
     container_name: graphify
     restart: unless-stopped
     ports:
