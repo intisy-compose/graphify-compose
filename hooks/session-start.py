@@ -33,7 +33,7 @@ def read_env_file_value(key):
 
 
 GITHUB_ROOT = os.environ.get("GRAPHIFY_PROJECTS_ROOT") or read_env_file_value("PROJECTS_ROOT")
-RUNNER = os.path.join(GRAPHIFY_DIR, "watch-runner.ps1")
+RUNNER = os.path.join(GRAPHIFY_DIR, "scripts", "watch-runner.ps1")
 STATE_DIR = os.path.join(GRAPHIFY_DIR, ".watchers")
 MCP_URL = "http://localhost:8770/mcp"
 HEAL_LOG = os.path.join(GRAPHIFY_DIR, "healthcheck.log")

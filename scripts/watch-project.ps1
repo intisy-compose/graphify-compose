@@ -5,13 +5,13 @@
 .DESCRIPTION
   Like the per-session watcher the SessionStart hook starts, but flagged persistent so
   session end never stops it. Use for a project you always want kept current. Stop it
-  with watch-stop.ps1. Building + watching happens in a detached background process.
+  with `docker-compose.ps1 watch-stop`. Building + watching happens in a detached background process.
 
 .PARAMETER TargetPath
   Absolute path to the project folder to keep watched.
 
 .EXAMPLE
-  .\watch-project.ps1 C:\projects\my-project
+  .\docker-compose.ps1 watch C:\projects\my-project
 #>
 [CmdletBinding()]
 param(
@@ -20,9 +20,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$scriptDir = $PSScriptRoot
+$scriptDir = Split-Path $PSScriptRoot
 $stateDir = Join-Path $scriptDir '.watchers'
-$runner = Join-Path $scriptDir 'watch-runner.ps1'
+$runner = Join-Path $PSScriptRoot 'watch-runner.ps1'
 
 if (-not (Test-Path $TargetPath)) { throw "Project folder not found: $TargetPath" }
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
@@ -42,4 +42,4 @@ $proc = Start-Process powershell `
     ConvertTo-Json | Set-Content -Path $stateFile -Encoding utf8
 
 Write-Host "Pinned persistent watcher (pid $($proc.Id)) on $resolved" -ForegroundColor Green
-Write-Host "Stop it with: .\watch-stop.ps1 `"$resolved`"" -ForegroundColor DarkGray
+Write-Host "Stop it with: .\docker-compose.ps1 watch-stop `"$resolved`"" -ForegroundColor DarkGray

@@ -8,7 +8,7 @@
 Requires [Docker](https://docs.docker.com/get-docker/) and a local clone of the
 graphify server repo (it holds the `Dockerfile` the image is built from).
 
-```bash
+```powershell
 git clone https://github.com/intisy-compose/graphify-compose
 cd graphify-compose
 
@@ -16,8 +16,7 @@ cd graphify-compose
 git clone https://github.com/Graphify-Labs/graphify repo
 cp .env.example .env    # then edit: set GRAPHIFY_API_KEY and PROJECTS_ROOT
 
-# Launcher (up | down | restart | logs): docker-compose.ps1 or .bat on Windows, .sh elsewhere
-./docker-compose.sh up
+.\docker-compose.ps1 up   # the one CLI; `.\docker-compose.ps1 help` lists every command
 ```
 
 - MCP endpoint: `http://localhost:8770/mcp`
@@ -38,5 +37,13 @@ Copy `.env.example` to `.env` (gitignored) and set:
 `hooks/session-start.py` and `hooks/session-end.py` are Claude Code session hooks
 that graph and watch whichever project you open, ref-counted so multiple sessions
 share one watcher. They resolve their own location automatically and only act on projects under
-`PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). The
-`watch-*.ps1` scripts drive the watcher directly on Windows.
+`PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). Drive the watchers by hand
+through the same CLI:
+
+```powershell
+.\docker-compose.ps1 watch <path>        # pin a persistent watcher
+.\docker-compose.ps1 watch-list          # list watchers and whether they are alive
+.\docker-compose.ps1 watch-stop <path>   # or -All
+.\docker-compose.ps1 regraph <path>      # rebuild the default graph once, [-Force]
+.\docker-compose.ps1 healthcheck         # restart the stack if the port proxy dropped
+```

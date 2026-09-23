@@ -9,9 +9,9 @@
   Stop every watcher.
 
 .EXAMPLE
-  .\watch-stop.ps1 C:\projects\my-project
+  .\docker-compose.ps1 watch-stop C:\projects\my-project
 .EXAMPLE
-  .\watch-stop.ps1 -All
+  .\docker-compose.ps1 watch-stop -All
 #>
 [CmdletBinding(DefaultParameterSetName = 'One')]
 param(
@@ -22,7 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$stateDir = Join-Path $PSScriptRoot '.watchers'
+$stateDir = Join-Path (Split-Path $PSScriptRoot) '.watchers'
 if (-not (Test-Path $stateDir)) { Write-Host 'No watchers.'; return }
 
 function Stop-One($stateFile) {

@@ -3,7 +3,7 @@
   Long-running process: build a project's graph if missing, then watch it for changes.
 
 .DESCRIPTION
-  Launched detached by the SessionStart hook (and by watch-project.ps1). Ensures the
+  Launched detached by the SessionStart hook (and by `docker-compose.ps1 watch`). Ensures the
   target has a graph, then runs `graphify watch`, which rebuilds graph.json + graph.html
   in-place on every code change. The MCP server hot-reloads the file on its next query,
   so no container restart is needed. Meant to run in the background; not called directly.
@@ -18,7 +18,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$scriptDir = $PSScriptRoot
+$scriptDir = Split-Path $PSScriptRoot
 $graphifyExe = Join-Path $scriptDir 'venv\Scripts\graphify.exe'
 $graphFile = Join-Path $TargetPath 'graphify-out\graph.json'
 

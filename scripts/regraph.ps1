@@ -15,7 +15,7 @@
   that legitimately delete code).
 
 .EXAMPLE
-  .\regraph.ps1 C:\projects\my-project
+  .\docker-compose.ps1 regraph C:\projects\my-project
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +26,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$scriptDir = $PSScriptRoot
+$scriptDir = Split-Path $PSScriptRoot
 $graphifyExe = Join-Path $scriptDir 'venv\Scripts\graphify.exe'
 $graphFile = Join-Path $scriptDir 'graphify-out\graph.json'
 $containerName = 'graphify'

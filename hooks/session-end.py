@@ -39,7 +39,7 @@ def main():
 
     state = json.load(open(sp, encoding="utf-8"))
     if state.get("persistent"):
-        return  # manually pinned via watch-project.ps1 - never auto-stopped
+        return  # manually pinned via `docker-compose.ps1 watch` - never auto-stopped
 
     refs = int(state.get("refs", 1)) - 1
     if refs > 0:

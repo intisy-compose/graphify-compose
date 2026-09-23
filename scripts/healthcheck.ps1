@@ -13,7 +13,7 @@
 param()
 
 $url = 'http://localhost:8770/mcp'
-$logFile = Join-Path $PSScriptRoot 'healthcheck.log'
+$logFile = Join-Path (Split-Path $PSScriptRoot) 'healthcheck.log'
 
 function Write-Log($message) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $message" | Add-Content -Path $logFile -Encoding utf8

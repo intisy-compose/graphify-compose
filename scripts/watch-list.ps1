@@ -5,7 +5,7 @@
 [CmdletBinding()]
 param()
 
-$stateDir = Join-Path $PSScriptRoot '.watchers'
+$stateDir = Join-Path (Split-Path $PSScriptRoot) '.watchers'
 if (-not (Test-Path $stateDir)) { Write-Host 'No watchers.'; return }
 
 $rows = Get-ChildItem -Path $stateDir -Filter '*.json' | ForEach-Object {
