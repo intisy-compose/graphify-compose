@@ -9,15 +9,12 @@ A Docker stack that runs a [graphify](https://github.com/Graphify-Labs/graphify)
 
 ## Quick start
 
-Requires [Docker](https://docs.docker.com/get-docker/) and a local clone of the
-graphify server repo (it holds the `Dockerfile` the image is built from).
+Requires [Docker](https://docs.docker.com/get-docker/).
 
 ```powershell
 git clone https://github.com/intisy-compose/graphify-compose
 cd graphify-compose
 
-# Provide the build context and configuration
-git clone https://github.com/Graphify-Labs/graphify repo
 cp .env.example .env    # then edit: set GRAPHIFY_API_KEY and PROJECTS_ROOT
 
 .\docker-compose.ps1 up   # the one CLI; `.\docker-compose.ps1 help` lists every command
@@ -51,6 +48,20 @@ through the same CLI:
 .\docker-compose.ps1 regraph <path>      # rebuild the default graph once, [-Force]
 .\docker-compose.ps1 healthcheck         # restart the stack if the port proxy dropped
 ```
+
+## Reproducible image
+
+The image is built from `image/Dockerfile`: graphify's source at the commit pinned in
+`docker-compose.yml`, the packages in `image/requirements.lock` installed exactly (no
+re-resolution) and a digest-pinned Python base. Rebuilding therefore reproduces the image that last
+worked instead of picking up whatever PyPI serves that day.
+
+- `up` and `restart` never rebuild; `up` only builds when no image exists yet.
+- `rebuild` builds a candidate, starts it on a spare port and switches only if its MCP endpoint
+  answers. Otherwise the previous image is restored and the running stack is left alone.
+- To upgrade graphify, run `relock <commit>` with the new upstream commit sha (or plain `relock` to
+  re-resolve the current one), then `rebuild`. Move the host venv the watchers use to the same
+  graphify version, so the graphs it writes and the server that reads them stay in step.
 
 ## License
 
