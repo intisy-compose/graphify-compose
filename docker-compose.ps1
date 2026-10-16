@@ -6,6 +6,7 @@ $forwarded = $args
 
 Set-StrictMode -Version Latest
 
+$envFile        = Join-Path $PSScriptRoot ".env"
 $image          = "graphify-server:latest"
 $previousImage  = "graphify-server:previous"
 $candidateName  = "graphify-candidate"
@@ -39,11 +40,61 @@ function Invoke-Helper([string]$Name) {
     exit $LASTEXITCODE
 }
 
+function Read-Env {
+    $values = @{}
+    if (-not (Test-Path $envFile)) { return $values }
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$') { $values[$Matches[1]] = $Matches[2].Trim('"') }
+    }
+    return $values
+}
+
+function Set-EnvValue([string]$Name, [string]$Value) {
+    $lines = @(Get-Content $envFile)
+    if ($lines -match "^\s*$Name\s*=") { $lines = $lines -replace "^\s*$Name\s*=.*$", "$Name=$Value" }
+    else { $lines += "$Name=$Value" }
+    [System.IO.File]::WriteAllText($envFile, (($lines -join "`n") + "`n"))
+}
+
+function Get-TailnetStatus {
+    $raw = docker compose exec -T tailscale tailscale --socket=/var/run/tailscale/tailscaled.sock status --json 2>$null
+    if (-not $raw) { return $null }
+    try { return ($raw | Out-String | ConvertFrom-Json) } catch { return $null }
+}
+
+# The MCP server and the local explorers do not need the tailnet, so a node that cannot join only
+# loses the tailnet address; the gateway's certificate is for the ts.net name, written here first.
+function Connect-Tailnet {
+    $values = Read-Env
+    if (-not $values["TS_AUTHKEY"] -and -not (Test-Path (Join-Path $PSScriptRoot "data\tailscale\tailscaled.state"))) {
+        Write-Err "TS_AUTHKEY is empty in .env and this node has not joined the tailnet yet; the explorers"
+        Write-Err "are on localhost only. Create a key at https://login.tailscale.com/admin/settings/keys"
+        return
+    }
+    Write-Step "Joining the tailnet..."
+    docker compose up -d tailscale
+    $deadline = (Get-Date).AddSeconds(90)
+    while ((Get-Date) -lt $deadline) {
+        $status = Get-TailnetStatus
+        if ($status -and $status.BackendState -eq "Running" -and $status.Self.DNSName) {
+            $tailnetHost = $status.Self.DNSName.TrimEnd('.')
+            Write-OK "Joined as $tailnetHost"
+            if ($values["GRAPHIFY_HOST"] -ne $tailnetHost) { Set-EnvValue "GRAPHIFY_HOST" $tailnetHost; Write-OK "Wrote GRAPHIFY_HOST to .env." }
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+    Write-Err "The node did not join within 90s (an expired or used-up TS_AUTHKEY is the usual cause);"
+    Write-Err "the explorers are on localhost only. Check '.\docker-compose.ps1 logs'."
+}
+
 function Show-Urls {
+    $tailnetHost = (Read-Env)["GRAPHIFY_HOST"]
     Write-Host ""
     Write-Host "  MCP endpoint   : http://localhost:8770/mcp"
     Write-Host "  Demo explorer  : http://localhost:8771/demo/graph.html"
     Write-Host "  Any project    : http://localhost:8771/projects/<path>/graphify-out/graph.html"
+    if ($tailnetHost) { Write-Host "  On the tailnet : https://$tailnetHost/demo/graph.html   (from any device on your tailnet)" }
 }
 
 function Test-ImageExists([string]$Name) {
@@ -66,7 +117,7 @@ function Get-BaseImage {
 # Any HTTP status from /mcp means the server came up; 000 means it never answered.
 function Test-ImageServes([string]$Name) {
     docker rm -f $candidateName *> $null
-    docker run -d --name $candidateName -p "${candidatePort}:8080" -e "GRAPHIFY_API_KEY=candidate-check" `
+    docker run -d --name $candidateName -p "127.0.0.1:${candidatePort}:8080" -e "GRAPHIFY_API_KEY=candidate-check" `
         -v "${PSScriptRoot}\graphify-out:/data:ro" $Name `
         /data/graph.json --transport http --host 0.0.0.0 --port 8080 *> $null
     $deadline = (Get-Date).AddSeconds(90)
@@ -146,9 +197,9 @@ if ($helpers.ContainsKey($Command.ToLower())) { Invoke-Helper $helpers[$Command.
 Set-Location $PSScriptRoot
 
 switch ($Command.ToLower()) {
-    "up"      { Assert-Setup; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
+    "up"      { Assert-Setup; Connect-Tailnet; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
     "down"    { Write-Step "Stopping everything..."; docker compose down; break }
-    "restart" { Assert-Setup; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
+    "restart" { Assert-Setup; Connect-Tailnet; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
     "rebuild" { Assert-Setup; Invoke-SafeRebuild; break }
     "relock"  { Invoke-Relock $(if ($forwarded) { "$($forwarded[0])" } else { "" }); break }
     "logs"    { docker compose logs -f; break }

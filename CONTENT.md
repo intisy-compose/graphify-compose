@@ -1,7 +1,9 @@
-- **graphify** - MCP server on `:8770`; serves any project via `project_path` and
+- **graphify** - MCP server on `127.0.0.1:8770`; serves any project via `project_path` and
   hot-reloads `graph.json` when it changes.
-- **graphify-web** - static server on `:8771` for the interactive `graph.html`
-  explorers.
+- **graphify-web** - static server for the interactive `graph.html` explorers. It serves only the
+  `graphify-out` folders, never the project sources around them.
+- **tailscale** and **gateway** - Caddy puts the explorers on the tailnet name over HTTPS and on
+  `127.0.0.1:8771`; nothing listens on the LAN.
 
 ## Quick start
 
@@ -16,9 +18,10 @@ cp .env.example .env    # then edit: set GRAPHIFY_API_KEY and PROJECTS_ROOT
 .\docker-compose.ps1 up   # the one CLI; `.\docker-compose.ps1 help` lists every command
 ```
 
-- MCP endpoint: `http://localhost:8770/mcp`
-- Demo explorer: `http://localhost:8771/demo/graph.html`
-- Any project: `http://localhost:8771/projects/<lang>/<name>/graphify-out/graph.html`
+- MCP endpoint: `http://localhost:8770/mcp` (this PC only)
+- Demo explorer: `http://localhost:8771/demo/graph.html`, or `https://<GRAPHIFY_HOST>/demo/graph.html`
+  from any device on the tailnet
+- Any project: `/projects/<lang>/<name>/graphify-out/graph.html` under either address
 
 ## Configuration
 
@@ -28,6 +31,8 @@ Copy `.env.example` to `.env` (gitignored) and set:
 | --- | --- |
 | `GRAPHIFY_API_KEY` | Auth key the MCP server requires; use the same value in your MCP client. **Required.** |
 | `PROJECTS_ROOT` | Absolute path to the folder of projects, mounted read-only at `/projects`. |
+| `TS_AUTHKEY` | Tailscale auth key for the explorer node's first join; without it the explorers are on localhost only. |
+| `GRAPHIFY_HOST` | The node's ts.net name, written by `up` once it has joined. |
 
 ## Auto-graph on session start (optional)
 
