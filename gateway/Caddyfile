@@ -1,11 +1,14 @@
-# Runs inside the tailscale container's network namespace. Certificates for the ts.net name come
-# from tailscaled over its socket, so every device on the tailnet gets real, auto-renewed HTTPS.
+# tailscale shares this container's network namespace. Certificates for the ts.net name come from
+# tailscaled over its socket, never from a public CA, so every device on the tailnet gets real HTTPS.
 {
 	admin off
 	auto_https disable_redirects
 }
 
 {$GRAPHIFY_HOST}:443 {
+	tls {
+		get_certificate tailscale
+	}
 	encode gzip
 	reverse_proxy graphify-web:80
 }
