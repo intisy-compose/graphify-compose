@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path $PSScriptRoot
 $graphifyExe = Join-Path $scriptDir 'venv\Scripts\graphify.exe'
 $graphFile = Join-Path $scriptDir 'graphify-out\graph.json'
-$containerName = 'graphify'
+$containerName = 'graphify-server'
 
 function Assert-Prerequisites {
     if (-not (Test-Path $graphifyExe)) {

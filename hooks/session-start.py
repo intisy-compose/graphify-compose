@@ -141,10 +141,10 @@ def heal_graphify():
     except Exception:
         pass    # no HTTP response -> proxy likely down; heal below
     try:
-        subprocess.run(["docker", "restart", "graphify", "graphify-web"],
+        subprocess.run(["docker", "restart", "graphify-server", "graphify-web"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        stdin=subprocess.DEVNULL, timeout=25)
-        _log_heal("session-start: MCP unreachable -> restarted graphify + graphify-web")
+        _log_heal("session-start: MCP unreachable -> restarted graphify-server + graphify-web")
     except Exception as exc:
         _log_heal("session-start: MCP unreachable, restart failed: {}".format(exc))
 

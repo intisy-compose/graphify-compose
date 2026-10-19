@@ -48,5 +48,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Log "unhealthy (code=$code) -> restarting graphify + graphify-web"
-& $docker restart graphify graphify-web *> $null
+& $docker restart graphify-server graphify-web *> $null
 exit 0
