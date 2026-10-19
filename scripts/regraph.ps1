@@ -27,13 +27,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path $PSScriptRoot
-$graphifyExe = Join-Path $scriptDir 'venv\Scripts\graphify.exe'
+$venvPython = Join-Path $scriptDir 'venv\Scripts\python.exe'
 $graphFile = Join-Path $scriptDir 'graphify-out\graph.json'
 $containerName = 'graphify-server'
 
 function Assert-Prerequisites {
-    if (-not (Test-Path $graphifyExe)) {
-        throw "graphify binary not found at $graphifyExe (is the venv intact?)"
+    if (-not (Test-Path $venvPython)) {
+        throw "graphify venv not found at $venvPython (is the venv intact?)"
     }
     if (-not (Test-Path $TargetPath)) {
         throw "Target code folder not found: $TargetPath"
@@ -53,7 +53,7 @@ function Invoke-GraphRebuild {
         $env:GRAPHIFY_VIZ_NODE_LIMIT = '20000'
         $updateArgs = @('update', $resolvedTarget)
         if ($Force) { $updateArgs += '--force' }
-        & $graphifyExe @updateArgs
+        & $venvPython -m graphify @updateArgs
         if ($LASTEXITCODE -ne 0) { throw "graphify update exited with code $LASTEXITCODE" }
     }
     finally {

@@ -198,7 +198,7 @@ Set-Location $PSScriptRoot
 
 switch ($Command.ToLower()) {
     "up"      { Assert-Setup; Connect-Tailnet; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
-    "down"    { Write-Step "Stopping everything..."; docker compose down; break }
+    "down"    { Write-Step "Stopping everything..."; & (Join-Path $PSScriptRoot "scripts\watch-stop.ps1") -All; docker compose down; break }
     "restart" { Assert-Setup; Connect-Tailnet; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
     "rebuild" { Assert-Setup; Invoke-SafeRebuild; break }
     "relock"  { Invoke-Relock $(if ($forwarded) { "$($forwarded[0])" } else { "" }); break }
