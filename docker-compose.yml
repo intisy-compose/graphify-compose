@@ -85,6 +85,10 @@ services:
         condition: service_started
         restart: true
 
+x-volume-roles:
+  tailscale-socket: rebuilt
+  graphify-caddy-data: rebuilt
+
 volumes:
   tailscale-socket:
   graphify-caddy-data:
