@@ -25,10 +25,17 @@ $ErrorActionPreference = 'Stop'
 $stateDir = Join-Path (Split-Path $PSScriptRoot) '.watchers'
 if (-not (Test-Path $stateDir)) { Write-Host 'No watchers.'; return }
 
+# A watcher that already exited counts as stopped; taskkill on its PID would throw under 'Stop'.
+function Stop-ProcessTree([int]$ProcessId) {
+    if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return }
+    $ErrorActionPreference = 'Continue'
+    # /T kills the graphify child process the watcher runner spawned, not just the shell.
+    taskkill /PID $ProcessId /T /F 2>$null | Out-Null
+}
+
 function Stop-One($stateFile) {
     $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-    # /T kills the graphify child process the watcher runner spawned, not just the shell.
-    taskkill /PID $state.pid /T /F 2>$null | Out-Null
+    Stop-ProcessTree $state.pid
     Remove-Item $stateFile -Force
     Write-Host "Stopped watcher (pid $($state.pid)) for $($state.path)" -ForegroundColor Yellow
 }

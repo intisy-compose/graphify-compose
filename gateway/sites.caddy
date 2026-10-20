@@ -1,0 +1,10 @@
+{$TAILNET_HOST}:443 {
+	import tailnet
+	encode gzip
+	reverse_proxy graphify-web:80
+}
+
+http://:8771 {
+	encode gzip
+	reverse_proxy graphify-web:80
+}
