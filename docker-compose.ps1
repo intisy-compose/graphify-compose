@@ -88,6 +88,15 @@ function Connect-Tailnet {
     Write-Err "the explorers are on localhost only. Check '.\docker-compose.ps1 logs'."
 }
 
+# A watcher that cannot be stopped must not keep the stack running.
+function Stop-AllWatchers {
+    $stopped = $true
+    $global:LASTEXITCODE = 0
+    try { & (Join-Path $PSScriptRoot "scripts\watch-stop.ps1") -All; $stopped = $LASTEXITCODE -eq 0 }
+    catch { $stopped = $false }
+    if (-not $stopped) { Write-Err "Warning: not every watcher could be stopped; check '.\docker-compose.ps1 watch-list'." }
+}
+
 function Show-Urls {
     $tailnetHost = (Read-Env)["GRAPHIFY_HOST"]
     Write-Host ""
@@ -198,7 +207,7 @@ Set-Location $PSScriptRoot
 
 switch ($Command.ToLower()) {
     "up"      { Assert-Setup; Connect-Tailnet; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
-    "down"    { Write-Step "Stopping everything..."; & (Join-Path $PSScriptRoot "scripts\watch-stop.ps1") -All; docker compose down; break }
+    "down"    { Write-Step "Stopping everything..."; Stop-AllWatchers; docker compose down; break }
     "restart" { Assert-Setup; Connect-Tailnet; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
     "rebuild" { Assert-Setup; Invoke-SafeRebuild; break }
     "relock"  { Invoke-Relock $(if ($forwarded) { "$($forwarded[0])" } else { "" }); break }

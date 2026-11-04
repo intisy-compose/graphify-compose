@@ -105,7 +105,7 @@ print(name.rstrip(".") if s.get("BackendState") == "Running" else "")' 2>/dev/nu
 # The MCP server and the local explorers do not need the tailnet, so a node that cannot join only
 # loses the tailnet address; the gateway's certificate is for the ts.net name, written here first.
 connect_tailnet() {
-    local tailnet_host=""
+    local tailnet_host="" deadline
     if [ -z "$(env_value TS_AUTHKEY)" ] && [ ! -e "$here/data/tailscale/tailscaled.state" ]; then
         err "TS_AUTHKEY is empty in .env and this node has not joined the tailnet yet; the explorers"
         err "are on localhost only. Create a key at https://login.tailscale.com/admin/settings/keys"
@@ -113,7 +113,9 @@ connect_tailnet() {
     fi
     step "Joining the tailnet..."
     "${compose[@]}" up -d tailscale || true
+    deadline=$((SECONDS + 90))
     for _ in $(seq 45); do
+        [ "$SECONDS" -lt "$deadline" ] || break
         tailnet_host=$(get_tailnet_status)
         [ -z "$tailnet_host" ] || break
         sleep 2
@@ -163,12 +165,13 @@ is_http_status() { [[ $1 =~ ^[0-9]{3}$ ]] && [ "$1" != 000 ]; }
 # test_image_serves IMAGE: any HTTP status from /mcp means the server came up; 000 means it never
 # answered. The key is a throwaway, so the real one never reaches a command line.
 test_image_serves() {
-    local name=$1 code serves=false
+    local name=$1 code serves=false deadline=$((SECONDS + 90))
     docker rm -f "$candidate_name" >/dev/null 2>&1 || true
     docker run -d --name "$candidate_name" -p "127.0.0.1:$candidate_port:8080" -e GRAPHIFY_API_KEY=candidate-check \
         -v "$here/graphify-out:/data:ro" "$name" \
         /data/graph.json --transport http --host 0.0.0.0 --port 8080 >/dev/null 2>&1 || true
     for _ in $(seq 45); do
+        [ "$SECONDS" -lt "$deadline" ] || break
         code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://localhost:$candidate_port/mcp" 2>/dev/null || true)
         if is_http_status "$code"; then serves=true; break; fi
         [ "$(docker inspect -f '{{.State.Running}}' "$candidate_name" 2>/dev/null)" = true ] || break
@@ -245,7 +248,8 @@ invoke_recreate() {
 
 invoke_down() {
     step "Stopping everything..."
-    bash "$here/scripts/watch-stop.sh" --all
+    bash "$here/scripts/watch-stop.sh" --all ||
+        err "Warning: not every watcher could be stopped; check './docker-compose.sh watch-list'."
     "${compose[@]}" down
 }
 

@@ -2,6 +2,10 @@
 .SYNOPSIS
   Stop a graphify auto-watcher (by project folder) or all of them.
 
+.DESCRIPTION
+  A state file whose pid now belongs to another process is removed and that process left alone; a file
+  that is not a state file is skipped with a warning, so one bad file never keeps the others running.
+
 .PARAMETER TargetPath
   Project folder whose watcher to stop. Ignored when -All is given.
 
@@ -22,34 +26,35 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$stateDir = Join-Path (Split-Path $PSScriptRoot) '.watchers'
+. (Join-Path $PSScriptRoot 'watcher-state.ps1')
+$stackFolder = Split-Path $PSScriptRoot
+$stateDir = Join-Path $stackFolder '.watchers'
 if (-not (Test-Path $stateDir)) { Write-Host 'No watchers.'; return }
 
-# A watcher that already exited counts as stopped; taskkill on its PID would throw under 'Stop'.
-function Stop-ProcessTree([int]$ProcessId) {
-    if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return }
-    $ErrorActionPreference = 'Continue'
-    # /T kills the graphify child process the watcher runner spawned, not just the shell.
-    taskkill /PID $ProcessId /T /F 2>$null | Out-Null
-}
-
-function Stop-One($stateFile) {
-    $state = Get-Content $stateFile -Raw | ConvertFrom-Json
-    Stop-ProcessTree $state.pid
-    Remove-Item $stateFile -Force
-    Write-Host "Stopped watcher (pid $($state.pid)) for $($state.path)" -ForegroundColor Yellow
+function Stop-One([string]$StateFile) {
+    $state = Read-WatcherState $StateFile
+    if (-not $state) { Write-Host "Skipped ${StateFile}: it is not a watcher state file" -ForegroundColor Yellow; return }
+    $verdict = Stop-Watcher $state $StateFile $stackFolder
+    Remove-Item $StateFile -Force
+    if ($verdict -eq 'foreign') {
+        Write-Host "Removed stale watcher state for $($state.path): pid $($state.pid) is not its watcher" -ForegroundColor Yellow
+    } else {
+        Write-Host "Stopped watcher (pid $($state.pid)) for $($state.path)" -ForegroundColor Yellow
+    }
 }
 
 if ($All) {
-    Get-ChildItem -Path $stateDir -Filter '*.json' | ForEach-Object { Stop-One $_.FullName }
+    $failures = 0
+    foreach ($file in Get-ChildItem -Path $stateDir -Filter '*.json') {
+        try { Stop-One $file.FullName }
+        catch { Write-Host "Could not stop the watcher in $($file.FullName)" -ForegroundColor Yellow; $failures++ }
+    }
+    if ($failures) { exit 1 }
     return
 }
 
 $resolved = (Resolve-Path $TargetPath).Path
-$digest = ([System.BitConverter]::ToString(
-    [System.Security.Cryptography.MD5]::Create().ComputeHash(
-        [Text.Encoding]::UTF8.GetBytes($resolved.ToLower()))) -replace '-', '').Substring(0, 12).ToLower()
-$stateFile = Join-Path $stateDir "$digest.json"
+$stateFile = Join-Path $stateDir "$(Get-WatcherDigest $resolved).json"
 
 if (Test-Path $stateFile) { Stop-One $stateFile }
 else { Write-Host "No watcher found for $resolved" }

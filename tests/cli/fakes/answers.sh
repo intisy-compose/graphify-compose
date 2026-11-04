@@ -5,6 +5,7 @@
 #   tailnet            running | stopped (default running): what `tailscale status --json` reports
 #   image-exists       yes | no (default yes): graphify-server:latest exists
 #   server-running     true | false | missing (default true): graphify-server's State.Running
+#   server-states      lines of the same words, answered one per check before server-running is
 #   candidate-running  true | false (default true): graphify-candidate's State.Running
 #   info-exit, build-exit, relock-exit, tailscale-exit: exit codes (default 0)
 # `compose down` notes in down-saw-watcher whether the fake graphify watch still ran at that moment.
@@ -19,10 +20,14 @@ answer_tailnet_status() {
     fi
 }
 
+# answer_server_running: the first line of server-states, which it then drops, or server-running.
 answer_server_running() {
-    case "$(state_value server-running true)" in
+    local answer
+    answer=$(head -n 1 "$state/server-states" 2>/dev/null)
+    if [ -n "$answer" ]; then sed -i 1d "$state/server-states"; else answer=$(state_value server-running true); fi
+    case "$answer" in
         missing) echo "Error: No such object: graphify-server" >&2; return 1 ;;
-        *) state_value server-running true ;;
+        *) echo "$answer" ;;
     esac
 }
 
