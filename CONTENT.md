@@ -9,7 +9,7 @@
 
 Requires [Docker](https://docs.docker.com/get-docker/) with the compose plugin and one of the two
 CLIs: `docker-compose.ps1` on Windows (PowerShell 5.1, built in), or `docker-compose.sh` on Linux
-(bash 4.3 or newer, `curl`, `python3` and procps). `docker-compose.sh` also runs from Git Bash on
+(bash 4.3 or newer, `curl` and `python3`; the watchers read `/proc`, so BusyBox hosts work too). `docker-compose.sh` also runs from Git Bash on
 Windows, where `up` needs a `python3` on the PATH to read the tailnet name; the watchers need none.
 
 ```powershell
@@ -60,15 +60,18 @@ only for now; on Linux, pin watchers by hand. Drive the watchers through the sam
 
 A watcher's state is `.watchers/<digest>.json`, the digest being the first 12 hex digits of the MD5
 of the project's absolute path: lowercased on Windows, as given on Linux, the way the hooks'
-`os.path.normcase` does it. `watch` on a project that already has a live watcher keeps that one.
+`os.path.normcase` does it. `watch` on a project that already has a live watcher keeps that one, and
+two `watch` of one project at once, from either CLI, start one watcher: the second waits for the first.
 `down` stops every watcher before the stack, and a watcher ends itself, removing its state file, once
 two checks a minute apart find `graphify-server` missing or stopped (one miss is a `restart` or a
 `rebuild`; not while Docker itself is down), so none outlives the stack.
 
-A pid in a state file is trusted only while its process runs a watcher runner for that project and
-started before the file was written; otherwise the process is left alone and the stale file removed,
-because pids are reused. A graphify whose runner was killed outright is found by its command line and
-stopped with it, and a state file that cannot be read is skipped with a warning without keeping
+A pid in a state file is trusted only while its process runs this stack's watcher runner with that
+project as its argument and started before the file was written; otherwise the process is left alone
+and the stale file removed, because pids are reused. Arguments are compared whole (case-insensitively
+on Windows), so a watcher of `app` is never taken for one of `app2` or of a folder inside `app`. A
+graphify whose runner was killed outright is found by its arguments (this stack's venv python,
+`-m graphify watch` and the project) and stopped with it, and a state file that cannot be read is skipped with a warning without keeping
 `down` from stopping the stack. On Linux a watcher runs in its own process group (`setsid`) and
 `watch-stop` ends the group; on Windows it ends the process tree.
 

@@ -7,7 +7,8 @@
 param()
 
 . (Join-Path $PSScriptRoot 'watcher-state.ps1')
-$stateDir = Join-Path (Split-Path $PSScriptRoot) '.watchers'
+$stackFolder = Split-Path $PSScriptRoot
+$stateDir = Join-Path $stackFolder '.watchers'
 if (-not (Test-Path $stateDir)) { Write-Host 'No watchers.'; return }
 
 $rows = Get-ChildItem -Path $stateDir -Filter '*.json' | ForEach-Object {
@@ -15,7 +16,7 @@ $rows = Get-ChildItem -Path $stateDir -Filter '*.json' | ForEach-Object {
     if (-not $state) { Write-Host "Skipped $($_.FullName): it is not a watcher state file" -ForegroundColor Yellow; return }
     [PSCustomObject]@{
         Pid        = $state.pid
-        Alive      = Test-IsWatcher $state $_.FullName
+        Alive      = Test-IsWatcher $state $_.FullName $stackFolder
         Persistent = [bool]$state.persistent
         Refs       = $state.refs
         Project    = $state.path

@@ -660,7 +660,8 @@ runner=$(state_pid)
 run_cli watch-list
 check "the header" said "Pid     Alive Persistent Refs Project"
 check "alive" grep -qE "^$runner +True +True +1 +.*My-Project$" <<<"$output"
-in_lib end_process_tree "$runner"
+kill_runner_only "$runner"
+wait_for dead "$runner"
 run_cli watch-list
 check "dead" grep -qE "^$runner +False " <<<"$output"
 run_cli watch-list --all
@@ -741,10 +742,9 @@ check "the runner was left alone" alive "$runner"
 finish
 
 begin "down ends a watcher the ps1 or a hook started"
-mkdir -p "$scratch/stand-in"
-printf '%s\n' '#!/bin/bash' 'while :; do "$REAL_SLEEP" 1; done' >"$scratch/stand-in/watch-runner.ps1"
+printf '%s\n' '#!/bin/bash' 'while :; do "$REAL_SLEEP" 1; done' >"$stack/scripts/watch-runner.ps1"
 project=$(in_lib resolve_project "$projects/My-Project")
-ps1_runner=$(start_stand_in bash "$scratch/stand-in/watch-runner.ps1" "$project")
+ps1_runner=$(start_stand_in bash "$stack/scripts/watch-runner.ps1" "$project")
 write_ps1_state "$project" "$ps1_runner"
 run_cli down
 check "exits 0" status_is 0
@@ -853,6 +853,97 @@ start_watcher
 "$REAL_SLEEP" 3
 check "one check so far" [ "$(calls_matching '^info$')" -eq 1 ]
 check "says why" grep -qF "WATCH_CHECK_SECONDS=0.2 is not a whole number of seconds above 0; checking every 60 s." "$stack"/.watchers/*.log.err
+finish
+
+## watchers told apart by whole arguments
+
+# lib_stack: the scratch stack as the scripts see it.
+lib_stack() { in_lib stack_folder "$stack/scripts/watch-runner.sh"; }
+
+alive_graphify_count() {
+    local count=0 pid
+    while read -r pid; do if local_alive "$pid"; then count=$((count + 1)); fi; done <"$state/watch-pids"
+    echo "$count"
+}
+
+# term_runner_only PID: TERM to the runner alone, not to its group, as `kill PID` sends it.
+term_runner_only() {
+    local local_pid=$1
+    if [ -n "${MSYSTEM:-}" ]; then local_pid=$(ps | awk -v winpid="$1" '$4 == winpid { print $1 }'); fi
+    kill -TERM "$local_pid"
+}
+
+begin "stopping a watcher leaves the watcher of a longer path with the same start"
+mkdir -p "$projects/app" "$projects/app2"
+app=$(in_lib resolve_project "$projects/app")
+app2=$(in_lib resolve_project "$projects/app2")
+start_watcher "$projects/app2"
+app2_runner=$(in_lib state_pid "$(state_file_of "$app2")")
+app2_graphify=$(watch_pid)
+start_watcher "$projects/app"
+run_cli watch-stop "$projects/app"
+check "stops app" said "Stopped watcher"
+check "app's state is gone" [ ! -e "$(state_file_of "$app")" ]
+check "app2's runner lives" alive "$app2_runner"
+check "app2's graphify lives" local_alive "$app2_graphify"
+check "app2's state stays" [ -f "$(state_file_of "$app2")" ]
+finish
+
+begin "a watcher on a parent folder and one on a child are told apart"
+mkdir -p "$projects/parent/child"
+parent=$(in_lib resolve_project "$projects/parent")
+child=$(in_lib resolve_project "$projects/parent/child")
+start_watcher "$projects/parent/child"
+child_runner=$(in_lib state_pid "$(state_file_of "$child")")
+child_graphify=$(watch_pid)
+in_lib write_state "$(state_file_of "$parent")" "$parent" "$child_runner"
+run_cli watch "$projects/parent"
+in_lib state_pid "$(state_file_of "$parent")" >>"$scratch/pids"
+check "the child's runner does not count as the parent's" not_said "Already watching"
+check "the parent gets its own" said "Pinned persistent watcher"
+run_cli watch-stop "$projects/parent"
+check "stops the parent" said "Stopped watcher"
+check "the child's runner lives" alive "$child_runner"
+check "the child's graphify lives" local_alive "$child_graphify"
+check "the child's state stays" [ -f "$(state_file_of "$child")" ]
+finish
+
+begin "another checkout's venv at a longer path is left alone"
+project=$(in_lib resolve_project "$projects/My-Project")
+other_python=$(in_lib venv_python "$scratch/elsewhere$stack")
+mkdir -p "$(dirname "$other_python")"
+cp "$fakes/venv-python" "$other_python"
+chmod +x "$other_python"
+other_graphify=$(start_stand_in env FAKE_DOCKER_DIR="$state" "$other_python" -m graphify watch "$project")
+start_watcher
+runner=$(state_pid)
+run_cli watch-stop "$projects/My-Project"
+check "stops this stack's watcher" wait_for dead "$runner"
+check "the other checkout's graphify lives" alive "$other_graphify"
+finish
+
+begin "two watch at once start one watcher; the second waits and keeps it"
+with_short_checks
+(run_cli watch "$projects/My-Project") &
+first_watch=$!
+run_cli watch "$projects/My-Project"
+wait "$first_watch"
+for file in "$stack"/.watchers/*.json; do [ -f "$file" ] && in_lib state_pid "$file" >>"$scratch/pids"; done
+"$REAL_SLEEP" 4
+check "one graphify was started" [ "$(calls_matching 'graphify watch')" -eq 1 ]
+check "one graphify is left" [ "$(alive_graphify_count)" -eq 1 ]
+check "one state file" state_file_count_is 1
+check "it names a live watcher" in_lib is_live_watcher "$(state_files | head -n 1)" "$(lib_stack)"
+finish
+
+begin "a runner ended by TERM alone ends graphify and removes its state"
+start_watcher
+runner=$(state_pid)
+graphify=$(watch_pid)
+term_runner_only "$runner"
+check "the runner ends" wait_for dead "$runner"
+check "graphify ends" wait_for local_dead "$graphify"
+check "its state file is gone" wait_for state_file_count_is 0
 finish
 
 ## healthcheck

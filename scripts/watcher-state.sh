@@ -111,68 +111,170 @@ write_state() {
         mv -f "$1.tmp" "$1"
 }
 
-## Which process a pid is
+## Which process a pid is. Every comparison is of whole arguments, never of substrings: /w/app must not
+## match a watcher of /w/app2 or of a folder below /w/app, nor this venv another checkout's.
 
-# process_record PID: "START_SECONDS<TAB>COMMAND LINE" of a running process, or nothing.
+# proc_stat_field PID INDEX: a field of /proc/PID/stat after the command name, counted from 0 (0 state,
+# 1 parent, 2 process group, 19 start time in clock ticks since boot).
+proc_stat_field() {
+    local stat fields
+    stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+    read -ra fields <<<"${stat##*) }"
+    echo "${fields[$2]}"
+}
+
+linux_start_seconds() {
+    local ticks boot hertz
+    ticks=$(proc_stat_field "$1" 19) || return 1
+    boot=$(sed -n 's/^btime //p' /proc/stat)
+    hertz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+    echo $((boot + ticks / hertz))
+}
+
+backslashes() {
+    local text
+    printf -v text '%*s' "$1" ''
+    printf '%s' "${text// /\\}"
+}
+
+# windows_argv COMMAND_LINE: the arguments, one per line, split as Windows splits them
+# (CommandLineToArgvW): whitespace outside quotes separates, quotes group, and backslashes are literal
+# unless they precede a quote, where 2n give n and 2n+1 give n and a literal quote.
+windows_argv() {
+    local line=$1 index=0 length=${#1} character argument="" quoted=false started=false slashes
+    while [ "$index" -lt "$length" ]; do
+        character=${line:index:1}
+        if [ "$character" = "\\" ]; then
+            slashes=0
+            while [ "${line:index:1}" = "\\" ]; do slashes=$((slashes + 1)); index=$((index + 1)); done
+            if [ "${line:index:1}" = '"' ]; then
+                argument+=$(backslashes $((slashes / 2)))
+                if [ $((slashes % 2)) -eq 1 ]; then argument+='"'; index=$((index + 1)); fi
+            else
+                argument+=$(backslashes "$slashes")
+            fi
+            started=true
+            continue
+        fi
+        if [ "$character" = '"' ]; then
+            if $quoted; then quoted=false; else quoted=true; fi
+            started=true
+        elif [[ $character == [[:space:]] ]] && ! $quoted; then
+            if $started; then printf '%s\n' "$argument"; fi
+            argument=""
+            started=false
+        else
+            argument+=$character
+            started=true
+        fi
+        index=$((index + 1))
+    done
+    if $started; then printf '%s\n' "$argument"; fi
+}
+
+# process_record PID: the start in seconds since the epoch, then each argument, one per line, of a
+# running process; nothing when there is none.
 process_record() {
-    local pid=$1 elapsed
+    local pid=$1 record
     is_valid_pid "$pid" || return 0
     if is_windows_host; then
         # shellcheck disable=SC2016 # PowerShell's own variables
-        powershell.exe -NoProfile -NonInteractive -Command '$p = Get-CimInstance Win32_Process -Filter "ProcessId = '"$pid"'"; if ($p) { "{0}`t{1}" -f ([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds(), $p.CommandLine }' 2>/dev/null | tr -d '\r'
+        record=$(powershell.exe -NoProfile -NonInteractive -Command '$p = Get-CimInstance Win32_Process -Filter "ProcessId = '"$pid"'"; if ($p -and $p.CommandLine) { "{0}`t{1}" -f ([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds(), $p.CommandLine }' 2>/dev/null | tr -d '\r')
+        [ -n "$record" ] || return 0
+        echo "${record%%$'\t'*}"
+        windows_argv "${record#*$'\t'}"
         return 0
     fi
     [ -r "/proc/$pid/cmdline" ] || return 0
-    elapsed=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')
-    [ -n "$elapsed" ] || return 0
-    printf '%s\t%s\n' "$(($(date +%s) - elapsed))" "$(tr '\0' ' ' <"/proc/$pid/cmdline")"
+    linux_start_seconds "$pid" || return 0
+    tr '\0' '\n' <"/proc/$pid/cmdline"
 }
 
-# has_text HAYSTACK NEEDLE: on Windows case-insensitively and with / and \ alike, as paths are written there.
-has_text() {
-    local haystack=$1 needle=$2
+# comparable_path PATH: on Windows a Git Bash path in Windows form, lowercased, with \ only, as Windows
+# compares paths; elsewhere PATH itself.
+comparable_path() {
+    local path=$1
     if is_windows_host; then
-        haystack=${haystack,,}; needle=${needle,,}
-        haystack=${haystack//\//\\}; needle=${needle//\//\\}
+        if [[ $path == /* ]]; then path=$(cygpath -w "$path"); fi
+        path=${path//\//\\}
+        path=${path,,}
     fi
-    [[ $haystack == *"$needle"* ]]
+    printf '%s' "$path"
 }
 
-# is_watcher_of PID FILE PATH: PID is still the watcher the state FILE names. A pid is reused once its
-# process ends, so it counts only while it runs a watcher runner for PATH and started before FILE was
-# last written, with 2 s for the clocks' rounding.
+same_path() { [ "$(comparable_path "$1")" = "$(comparable_path "$2")" ]; }
+
+# is_runner_of STACK PATH ARGUMENT...: one argument is this stack's watch-runner.sh or .ps1 and the
+# argument after it is PATH.
+is_runner_of() {
+    local stack_root=$1 path=$2 index
+    shift 2
+    local arguments=("$@")
+    for ((index = 0; index + 1 < ${#arguments[@]}; index++)); do
+        if { same_path "${arguments[index]}" "$stack_root/scripts/watch-runner.sh" ||
+            same_path "${arguments[index]}" "$stack_root/scripts/watch-runner.ps1"; } &&
+            same_path "${arguments[index + 1]}" "$path"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+is_shell() {
+    local name=${1##*[/\\]}
+    [[ ${name,,} =~ ^(ba)?sh(\.exe)?$ ]]
+}
+
+# is_graphify_of STACK PATH ARGUMENT...: the arguments are this stack's venv python, or a shell running
+# it as a script, then exactly -m graphify watch PATH.
+is_graphify_of() {
+    local python path=$2 first
+    python=$(venv_python "$1")
+    shift 2
+    local arguments=("$@")
+    if same_path "${arguments[0]:-}" "$python"; then first=1
+    elif is_shell "${arguments[0]:-}" && same_path "${arguments[1]:-}" "$python"; then first=2
+    else return 1
+    fi
+    [ "${#arguments[@]}" -eq $((first + 4)) ] && [ "${arguments[first]}" = -m ] &&
+        [ "${arguments[first + 1]}" = graphify ] && [ "${arguments[first + 2]}" = watch ] &&
+        same_path "${arguments[first + 3]}" "$path"
+}
+
+# is_watcher_of PID FILE PATH STACK: PID is still the watcher the state FILE names. A pid is reused once
+# its process ends, so it counts only while it runs this stack's watcher runner for PATH and started
+# before FILE was last written, with 2 s for the clocks' rounding.
 is_watcher_of() {
-    local pid=$1 file=$2 path=$3 record started command_line
-    record=$(process_record "$pid")
-    [ -n "$record" ] || return 1
-    started=${record%%$'\t'*}
-    command_line=${record#*$'\t'}
-    [[ $command_line == *watch-runner.sh* || $command_line == *watch-runner.ps1* ]] || return 1
-    has_text "$command_line" "$path" || return 1
-    [[ $started =~ ^[0-9]+$ ]] && [ "$started" -le $(($(stat -c %Y "$file") + 2)) ]
+    local pid=$1 file=$2 path=$3 stack_root=$4 record
+    mapfile -t record < <(process_record "$pid")
+    [ ${#record[@]} -ge 2 ] && [[ ${record[0]} =~ ^[0-9]+$ ]] || return 1
+    is_runner_of "$stack_root" "$path" "${record[@]:1}" || return 1
+    [ "${record[0]}" -le $(($(stat -c %Y "$file") + 2)) ]
 }
 
+# is_live_watcher FILE STACK
 is_live_watcher() {
     local pid path
-    pid=$(state_pid "$1") && path=$(state_path "$1") && is_watcher_of "$pid" "$1" "$path"
+    pid=$(state_pid "$1") && path=$(state_path "$1") && is_watcher_of "$pid" "$1" "$path" "$2"
 }
 
 # graphify_processes STACK PATH: the pids of this stack's venv running `graphify watch` on PATH. Found by
 # command line, because a runner killed outright leaves its graphify running with no pid on record.
 graphify_processes() {
-    local python pid command_line entry
-    python=$(venv_python "$1")
+    local pid command_line entry arguments
     if is_windows_host; then
         # shellcheck disable=SC2016 # PowerShell's own variables
-        powershell.exe -NoProfile -NonInteractive -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*-m graphify watch*" } | ForEach-Object { "{0}`t{1}" -f $_.ProcessId, $_.CommandLine }' 2>/dev/null |
+        powershell.exe -NoProfile -NonInteractive -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*graphify*watch*" } | ForEach-Object { "{0}`t{1}" -f $_.ProcessId, $_.CommandLine }' 2>/dev/null |
             tr -d '\r' | while IFS=$'\t' read -r pid command_line; do
-                has_text "$command_line" "$python" && has_text "$command_line" "$2" && echo "$pid"
+                mapfile -t arguments < <(windows_argv "$command_line")
+                if is_graphify_of "$1" "$2" "${arguments[@]}"; then echo "$pid"; fi
             done
         return 0
     fi
     for entry in /proc/[0-9]*/cmdline; do
-        command_line=$(tr '\0' ' ' <"$entry" 2>/dev/null) || continue
-        if [[ $command_line == *"-m graphify watch"* ]] && has_text "$command_line" "$python" && has_text "$command_line" "$2"; then
+        mapfile -t arguments < <(tr '\0' '\n' <"$entry" 2>/dev/null)
+        [ ${#arguments[@]} -gt 0 ] || continue
+        if is_graphify_of "$1" "$2" "${arguments[@]}"; then
             pid=${entry#/proc/}
             echo "${pid%/cmdline}"
         fi
@@ -207,16 +309,25 @@ stop_windows_tree() {
     [ ${#tree[@]} -eq 0 ] || kill -KILL "${tree[@]}" 2>/dev/null || true
 }
 
+linux_children() {
+    local entry child
+    for entry in /proc/[0-9]*/stat; do
+        child=${entry#/proc/}
+        child=${child%/stat}
+        [ "$(proc_stat_field "$child" 1 2>/dev/null)" != "$1" ] || echo "$child"
+    done
+}
+
 # signal_tree SIGNAL PID: a process that leads its own group (a runner started through setsid) is
 # signalled with its whole group; any other only with its direct children.
 signal_tree() {
-    local signal=$1 pid=$2
-    if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+    local signal=$1 pid=$2 child
+    if [ "$(proc_stat_field "$pid" 2 2>/dev/null)" = "$pid" ]; then
         kill "-$signal" -- "-$pid" 2>/dev/null || true
-    else
-        pkill "-$signal" -P "$pid" 2>/dev/null || true
-        kill "-$signal" "$pid" 2>/dev/null || true
+        return 0
     fi
+    for child in $(linux_children "$pid"); do kill "-$signal" "$child" 2>/dev/null || true; done
+    kill "-$signal" "$pid" 2>/dev/null || true
 }
 
 wait_until_ended() {
@@ -246,7 +357,7 @@ end_process_tree() {
 stop_watcher() {
     local file=$1 pid path orphan verdict=stopped
     pid=$(state_pid "$file") && path=$(state_path "$file") || return 1
-    if is_watcher_of "$pid" "$file" "$path"; then
+    if is_watcher_of "$pid" "$file" "$path" "$2"; then
         end_process_tree "$pid"
     elif process_is_alive "$pid"; then
         verdict=foreign
