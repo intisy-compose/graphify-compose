@@ -6,7 +6,6 @@ watcher is ended with what it runs, but only while its pid is still that watcher
 removed, so watchers never accumulate. A persistent watcher pinned by `watch` is never stopped here.
 Exits 0 on anything unexpected.
 """
-import json
 import os
 import sys
 
@@ -15,13 +14,6 @@ import watchers
 GRAPHIFY_DIR = os.environ.get("GRAPHIFY_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.join(GRAPHIFY_DIR, ".watchers")
 LOCK_WAIT_SECONDS = 8
-
-
-def read_cwd():
-    try:
-        return json.load(sys.stdin).get("cwd") or os.getcwd()
-    except Exception:
-        return os.getcwd()
 
 
 def leave_session(project, windows=watchers.IS_WINDOWS):
@@ -43,7 +35,7 @@ def leave_session(project, windows=watchers.IS_WINDOWS):
 
 
 def main():
-    project = os.path.abspath(read_cwd())
+    project = os.path.abspath(watchers.read_session_cwd())
     digest = watchers.digest_for(project)
     if not os.path.exists(os.path.join(STATE_DIR, digest + ".json")):
         return

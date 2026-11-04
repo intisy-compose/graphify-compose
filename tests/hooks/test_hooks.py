@@ -3,6 +3,7 @@ and commands everywhere, and real watcher processes of the OS this runs on, star
 hooks do. Run with `python3 -m unittest discover -s tests/hooks` from the repository."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -108,6 +109,20 @@ class Naming(unittest.TestCase):
         named = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                                stdout=subprocess.PIPE, check=True)
         self.assertEqual(named.stdout.decode().strip(), watchers.digest_for(path, windows=True))
+
+
+class Payload(unittest.TestCase):
+    def test_the_cwd_of_the_payload(self):
+        payload = io.BytesIO(json.dumps({"session_id": "s", "cwd": "F:\\p\\app"}).encode("utf-8"))
+        self.assertEqual(watchers.read_session_cwd(payload), "F:\\p\\app")
+
+    def test_a_byte_order_mark_from_a_powershell_pipe(self):
+        payload = io.BytesIO(b"\xef\xbb\xbf" + json.dumps({"cwd": "/srv/p/app"}).encode("utf-8") + b"\r\n")
+        self.assertEqual(watchers.read_session_cwd(payload), "/srv/p/app")
+
+    def test_no_payload_is_this_folder(self):
+        for raw in (b"", b"not json", b'{"cwd": ""}'):
+            self.assertEqual(watchers.read_session_cwd(io.BytesIO(raw)), os.getcwd(), raw)
 
 
 class RunnerAndVenv(unittest.TestCase):
