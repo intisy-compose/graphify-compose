@@ -51,8 +51,25 @@ Copy `.env.example` to `.env` (gitignored) and set:
 `hooks/session-start.py` and `hooks/session-end.py` are Claude Code session hooks
 that graph and watch whichever project you open, ref-counted so multiple sessions
 share one watcher. They resolve their own location automatically and only act on projects under
-`PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). The hooks run on Windows
-only for now; on Linux, pin watchers by hand. Drive the watchers through the same CLI:
+`PROJECTS_ROOT` from `.env` (override with `GRAPHIFY_PROJECTS_ROOT`). They run on Windows and on
+Linux, starting `watch-runner.ps1` or `watch-runner.sh` by the OS they run on, and start nothing
+while the host venv is missing. Register them in `~/.claude/settings.json` with this OS's venv
+python (they use only the standard library, so any `python3` runs them):
+
+```json
+"hooks": {
+  "SessionStart": [{ "hooks": [{ "type": "command", "timeout": 30,
+    "command": "\"<stack>/venv/bin/python\" \"<stack>/hooks/session-start.py\"" }] }],
+  "SessionEnd": [{ "hooks": [{ "type": "command", "timeout": 15,
+    "command": "\"<stack>/venv/bin/python\" \"<stack>/hooks/session-end.py\"" }] }]
+}
+```
+
+On Windows the python is `<stack>/venv/Scripts/python.exe`. A session watcher's state file is the
+hooks' own (no `persistent`, a `refs` count); they change it only under the watch lock below, write it
+whole through a rename, and end its watcher at the last session end only while its pid passes the same
+check the CLIs make. A session started where `watch` pinned a persistent watcher uses that one and
+never stops it. Drive the watchers through the same CLI:
 
 ```powershell
 .\docker-compose.ps1 watch <path>        # pin a persistent watcher
