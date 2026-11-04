@@ -7,7 +7,8 @@ scripts=$(cd "$(dirname "$0")" && pwd)
 . "$scripts/watcher-state.sh"
 
 [ $# -eq 0 ] || { printf '\033[31m%s\033[0m\n' "Usage: ./docker-compose.sh watch-list" >&2; exit 1; }
-state_folder="$(stack_folder "$0")/.watchers"
+stack=$(stack_folder "$0")
+state_folder="$stack/.watchers"
 
 state_files=()
 if [ -d "$state_folder" ]; then
@@ -15,7 +16,7 @@ if [ -d "$state_folder" ]; then
 fi
 if [ ${#state_files[@]} -eq 0 ]; then echo "No watchers."; exit 0; fi
 
-alive_word() { if is_watcher_of "$1" "$2" "$3"; then echo True; else echo False; fi; }
+alive_word() { if is_watcher_of "$1" "$2" "$3" "$stack"; then echo True; else echo False; fi; }
 
 persistent_word() { if [ "$(state_value "$1" persistent)" = true ]; then echo True; else echo False; fi; }
 

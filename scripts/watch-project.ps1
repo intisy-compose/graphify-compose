@@ -34,25 +34,60 @@ New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 $resolved = (Resolve-Path $TargetPath).Path
 $digest = Get-WatcherDigest $resolved
 $stateFile = Join-Path $stateDir "$digest.json"
+$lock = Join-Path $stateDir "$digest.lock"
 
-if (Test-Path $stateFile) {
-    $existing = Read-WatcherState $stateFile
-    if ($existing -and (Test-IsWatcher $existing $stateFile)) {
-        Write-Host "Already watching $resolved" -ForegroundColor Green
-        return
+# Enter-WatchLock: one watch of a project at a time, in either CLI, since two would each start a runner.
+# Creating a folder is atomic; a lock older than a minute was left by a watch that was killed.
+function Enter-WatchLock {
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        try { New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null; return $true } catch { }
+        $held = Get-Item $lock -ErrorAction SilentlyContinue
+        if ($held -and $held.CreationTime -lt (Get-Date).AddMinutes(-1)) { Remove-Item $lock -Force -ErrorAction SilentlyContinue; continue }
+        Start-Sleep -Milliseconds 100
     }
+    return $false
 }
 
-$logFile = Join-Path $stateDir "$digest.log"
-$proc = Start-Process powershell `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, $resolved) `
-    -WindowStyle Hidden -PassThru -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
+# Wait-RunnerState PROCESS: true once the runner has recorded itself and is still that watcher, within 10 s.
+function Wait-RunnerState($Process) {
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $state = if (Test-Path $stateFile) { Read-WatcherState $stateFile }
+        if ($state -and [int64]$state.pid -eq $Process.Id) { return (Test-IsWatcher $state $stateFile $scriptDir) }
+        if ($Process.HasExited) { return $false }
+        Start-Sleep -Milliseconds 200
+    }
+    return $false
+}
 
-Start-Sleep -Seconds 1
-if ($proc.HasExited) { throw "The watcher did not start; see $logFile.err" }
+function Start-Watcher {
+    if (Test-Path $stateFile) {
+        $existing = Read-WatcherState $stateFile
+        if ($existing -and (Test-IsWatcher $existing $stateFile $scriptDir)) {
+            Write-Host "Already watching $resolved" -ForegroundColor Green
+            return
+        }
+        Remove-Item $stateFile -Force
+    }
 
-@{ path = $resolved; pid = $proc.Id; refs = 1; persistent = $true } |
-    ConvertTo-Json | Set-Content -Path $stateFile -Encoding utf8
+    # Start-Process joins the arguments with spaces, so a path with spaces has to carry its own quotes.
+    # -Persistent makes the runner write its own state file, so it can never remove one before it exists.
+    $logFile = Join-Path $stateDir "$digest.log"
+    $process = Start-Process powershell `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$runner`"", "`"$resolved`"", '-Persistent') `
+        -WindowStyle Hidden -PassThru -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
 
-Write-Host "Pinned persistent watcher (pid $($proc.Id)) on $resolved" -ForegroundColor Green
-Write-Host "Stop it with: .\docker-compose.ps1 watch-stop `"$resolved`"" -ForegroundColor DarkGray
+    if (-not (Wait-RunnerState $process)) {
+        Stop-ProcessTree $process.Id
+        Remove-Item $stateFile -Force -ErrorAction SilentlyContinue
+        throw "The watcher did not start; see $logFile.err"
+    }
+
+    Write-Host "Pinned persistent watcher (pid $($process.Id)) on $resolved" -ForegroundColor Green
+    Write-Host "Stop it with: .\docker-compose.ps1 watch-stop `"$resolved`"" -ForegroundColor DarkGray
+}
+
+if (-not (Enter-WatchLock)) { throw "Another watch of $resolved is still starting; try again." }
+try { Start-Watcher }
+finally { Remove-Item $lock -Force -ErrorAction SilentlyContinue }

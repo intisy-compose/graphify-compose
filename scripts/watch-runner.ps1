@@ -12,15 +12,26 @@
 
 .PARAMETER TargetPath
   Absolute path to the project folder to watch.
+
+.PARAMETER Persistent
+  Write this watcher's persistent state file, as `docker-compose.ps1 watch` asks; the hooks write their
+  own. A persistent runner also ends itself once its state file names another runner.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string]$TargetPath
+    [string]$TargetPath,
+    [switch]$Persistent
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'watcher-state.ps1')
 $scriptDir = Split-Path $PSScriptRoot
+$stateFile = Join-Path (Join-Path $scriptDir '.watchers') "$(Get-WatcherDigest $TargetPath).json"
+if ($Persistent) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $stateFile) | Out-Null
+    Write-WatcherState $stateFile $TargetPath $PID
+}
 $venvPython = Join-Path $scriptDir 'venv\Scripts\python.exe'
 $graphFile = Join-Path $TargetPath 'graphify-out\graph.json'
 
@@ -48,8 +59,15 @@ function Remove-OwnStateFile {
 }
 
 $watcher = Start-Process -FilePath $venvPython -ArgumentList @('-m', 'graphify', 'watch', "`"$TargetPath`"") -NoNewWindow -PassThru
+function Test-IsSuperseded {
+    if (-not $Persistent) { return $false }
+    $state = Read-WatcherState $stateFile
+    return -not $state -or [int64]$state.pid -ne $PID
+}
+
 $misses = 0
 while (-not $watcher.HasExited) {
+    if (Test-IsSuperseded) { taskkill /PID $watcher.Id /T /F 2>$null | Out-Null; exit 0 }
     if (Test-StackIsGone) { $misses++ } else { $misses = 0 }
     if ($misses -ge 2) {
         taskkill /PID $watcher.Id /T /F 2>$null | Out-Null

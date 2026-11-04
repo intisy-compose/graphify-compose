@@ -34,6 +34,17 @@ wait_for_state() {
     return 1
 }
 
+# acquire_lock FOLDER: one watch of a project at a time, in either CLI, since two would each start a
+# runner. mkdir is atomic; a lock older than a minute was left by a watch that was killed.
+acquire_lock() {
+    for _ in $(seq 150); do
+        mkdir "$1" 2>/dev/null && return 0
+        if [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rmdir "$1" 2>/dev/null; continue; fi
+        sleep 0.1
+    done
+    return 1
+}
+
 # end_launched PID: ends the runner this script launched as local PID, whatever state it reached.
 end_launched() {
     local windows_pid
@@ -54,7 +65,10 @@ mkdir -p "$state_folder"
 digest=$(watcher_digest "$resolved")
 state_file="$state_folder/$digest.json"
 log_file="$state_folder/$digest.log"
-if [ -f "$state_file" ] && is_live_watcher "$state_file"; then
+lock="$state_folder/$digest.lock"
+acquire_lock "$lock" || fail "Another watch of $resolved is still starting; try again."
+trap 'rmdir "$lock" 2>/dev/null' EXIT
+if [ -f "$state_file" ] && is_live_watcher "$state_file" "$stack"; then
     printf '\033[32m%s\033[0m\n' "Already watching $resolved"
     exit 0
 fi
@@ -62,9 +76,9 @@ fi
 rm -f "$state_file" "$log_file.pid"
 start_detached "$log_file" "$resolved"
 launched=$!
-if ! pid=$(wait_for_state "$state_file") || ! is_watcher_of "$pid" "$state_file" "$resolved"; then
+if ! pid=$(wait_for_state "$state_file") || ! is_watcher_of "$pid" "$state_file" "$resolved" "$stack"; then
     end_launched "$launched"
-    rm -f "$state_file"
+    is_live_watcher "$state_file" "$stack" || rm -f "$state_file"
     fail "The watcher did not start; see $log_file.err"
 fi
 

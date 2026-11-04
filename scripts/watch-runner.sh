@@ -2,9 +2,10 @@
 # watch-runner.sh PATH: the long-running watcher process, started detached by watch-project.sh. It writes
 # its own persistent state file, builds the project's graph if it has none, then runs `graphify watch`,
 # which rebuilds graph.json and graph.html in place on every change; the MCP server reloads the file on
-# its next query. It ends itself, and removes its state file, once two checks in a row find
-# graphify-server missing or stopped (one miss is a restart or a rebuild), but not while Docker itself
-# is down. Not a command. WATCH_CHECK_SECONDS, a whole number (default 60), is how often it checks.
+# its next query. It ends itself once two checks in a row find graphify-server missing or stopped (one
+# miss is a restart or a rebuild), but not while Docker itself is down, and once its state file names
+# another runner. Ended any way short of a kill, it ends graphify and removes its own state file. Not a
+# command. WATCH_CHECK_SECONDS, a whole number (default 60), is how often it checks.
 set -uo pipefail
 scripts=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=scripts/watcher-state.sh
@@ -47,8 +48,13 @@ remove_own_state_file() {
 
 end_runner() {
     end_graphify
+    remove_own_state_file
     [ -z "$pause_fifo" ] || rm -f "$pause_fifo"
 }
+
+# is_superseded: the state file no longer names this runner, as when two `watch` ran at once and the
+# other runner wrote last; this one is then on no record and ends itself.
+is_superseded() { [ "$(state_pid "$state_file" 2>/dev/null)" != "$own_pid" ]; }
 
 # open_pause: a FIFO nobody writes to, held open and already unlinked, which `pause` waits on. A sleep
 # child would be missed by the ps1's taskkill /T on Git Bash and outlive a stopped watcher.
@@ -91,13 +97,8 @@ open_pause || echo "Could not open the pause FIFO; waiting with sleep." >&2
 interval=$(check_seconds)
 misses=0
 while kill -0 "$watcher" 2>/dev/null; do
+    if is_superseded; then exit 0; fi
     if stack_is_gone; then misses=$((misses + 1)); else misses=0; fi
-    if [ "$misses" -ge 2 ]; then
-        end_graphify
-        remove_own_state_file
-        exit 0
-    fi
+    if [ "$misses" -ge 2 ]; then exit 0; fi
     pause "$interval"
 done
-watcher=""
-remove_own_state_file
