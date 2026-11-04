@@ -5,7 +5,7 @@
 #   tailscale     - joins the tailnet inside the gateway's network namespace.
 # Every project under the GitHub root is mounted read-only, so any project that has a
 # graphify-out/graph.json is queryable/browsable without per-project config.
-# Auto-rebuild is handled by per-session `graphify watch` (see hooks/ + scripts/watch-*.ps1).
+# Auto-rebuild is handled by per-session `graphify watch` (see hooks/ + scripts/watch-*).
 services:
   graphify:
     image: graphify-server:latest

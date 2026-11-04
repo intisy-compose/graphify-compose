@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# watch-runner.sh PATH: the long-running watcher process, started detached by watch-project.sh. It writes
-# its own persistent state file, builds the project's graph if it has none, then runs `graphify watch`,
-# which rebuilds graph.json and graph.html in place on every change; the MCP server reloads the file on
-# its next query. It ends itself once two checks in a row find graphify-server missing or stopped (one
-# miss is a restart or a rebuild), but not while Docker itself is down, and once its state file names
-# another runner. Ended any way short of a kill, it ends graphify and removes its own state file. Not a
-# command. WATCH_CHECK_SECONDS, a whole number (default 60), is how often it checks.
+# watch-runner.sh PATH [--persistent]: the long-running watcher process, started detached by
+# watch-project.sh with --persistent, which makes it write its own persistent state file, and by the
+# SessionStart hook without, which writes and ref-counts the state file itself. It builds the project's
+# graph if it has none, then runs `graphify watch`, which rebuilds graph.json and graph.html in place on
+# every change; the MCP server reloads the file on its next query. It ends itself once two checks in a
+# row find graphify-server missing or stopped (one miss is a restart or a rebuild), but not while Docker
+# itself is down, and, when persistent, once its state file names another runner. Ended any way short of
+# a kill, it ends graphify and removes its own state file. Not a command. WATCH_CHECK_SECONDS, a whole
+# number (default 60), is how often it checks.
 set -uo pipefail
 scripts=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=scripts/watcher-state.sh
 . "$scripts/watcher-state.sh"
 
-[ $# -eq 1 ] || { echo "Usage: watch-runner.sh <path>" >&2; exit 1; }
+if [ $# -lt 1 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$2" != --persistent ]; }; then
+    echo "Usage: watch-runner.sh <path> [--persistent]" >&2
+    exit 1
+fi
 project=$1
+persistent=false
+[ $# -eq 1 ] || persistent=true
 stack=$(stack_folder "$0")
 state_folder="$stack/.watchers"
 state_file="$state_folder/$(watcher_digest "$project").json"
@@ -52,11 +59,13 @@ end_runner() {
     [ -z "$pause_fifo" ] || rm -f "$pause_fifo"
 }
 
-# is_superseded: the state file is gone or names another valid pid, as when two `watch` ran at once and
-# the other runner wrote last; this one is then on no record and ends itself. A file that is there but
-# names no valid pid is taken as being rewritten in place, as a hook may, and ends nothing.
+# is_superseded: a persistent runner's state file is gone or names another valid pid, as when two `watch`
+# ran at once and the other runner wrote last; this one is then on no record and ends itself. A file that
+# is there but names no valid pid ends nothing. A session runner never is: its hook writes the file after
+# starting it.
 is_superseded() {
     local pid
+    $persistent || return 1
     [ -e "$state_file" ] || return 0
     pid=$(state_pid "$state_file" 2>/dev/null) || return 1
     [ "$pid" != "$own_pid" ]
@@ -90,7 +99,7 @@ trap end_runner EXIT
 trap 'exit 143' TERM HUP INT
 
 mkdir -p "$state_folder"
-write_state "$state_file" "$project" "$own_pid" || exit 1
+if $persistent; then write_state "$state_file" "$project" "$own_pid" || exit 1; fi
 
 if [ ! -e "$project/graphify-out/graph.json" ]; then
     "$python" -m graphify update "$project"

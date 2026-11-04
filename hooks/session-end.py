@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """SessionEnd hook: stop the current project's auto-watcher when its last session closes.
 
-Decrements the reference count started by session-start.py. When it reaches zero the
-detached watcher process tree is killed and the state file removed, so watchers never
-accumulate. Exits 0 on anything unexpected.
+Decrements, under the CLIs' watch lock, the reference count session-start.py keeps. At zero the
+watcher is ended with what it runs, but only while its pid is still that watcher, and the state file
+removed, so watchers never accumulate. A persistent watcher pinned by `watch` is never stopped here.
+Exits 0 on anything unexpected.
 """
-import hashlib
 import json
 import os
-import subprocess
 import sys
+
+import watchers
 
 GRAPHIFY_DIR = os.environ.get("GRAPHIFY_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.join(GRAPHIFY_DIR, ".watchers")
+LOCK_WAIT_SECONDS = 8
 
 
 def read_cwd():
@@ -22,33 +24,36 @@ def read_cwd():
         return os.getcwd()
 
 
-def digest_for(cwd):
-    return hashlib.md5(os.path.normcase(os.path.abspath(cwd)).encode()).hexdigest()[:12]
-
-
-def kill_tree(pid):
-    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def main():
-    cwd = read_cwd()
-    sp = os.path.join(STATE_DIR, digest_for(cwd) + ".json")
-    if not os.path.exists(sp):
-        return
-
-    state = json.load(open(sp, encoding="utf-8"))
-    if state.get("persistent"):
-        return  # manually pinned via `docker-compose.ps1 watch` - never auto-stopped
-
+def leave_session(project, windows=watchers.IS_WINDOWS):
+    """Uncounts this session; returns True when it ended the watcher."""
+    state_file = os.path.join(STATE_DIR, watchers.digest_for(project, windows) + ".json")
+    state = watchers.read_state(state_file)
+    if not state or state.get("persistent"):
+        return False
     refs = int(state.get("refs", 1)) - 1
     if refs > 0:
         state["refs"] = refs
-        json.dump(state, open(sp, "w", encoding="utf-8"))
-        return
+        watchers.write_state(state_file, state)
+        return False
+    ended = watchers.is_watcher_of(state, state_file, GRAPHIFY_DIR, windows)
+    if ended:
+        watchers.end_process_tree(state["pid"], windows)
+    watchers.remove_file(state_file)
+    return ended
 
-    kill_tree(int(state["pid"]))
-    os.remove(sp)
+
+def main():
+    project = os.path.abspath(read_cwd())
+    digest = watchers.digest_for(project)
+    if not os.path.exists(os.path.join(STATE_DIR, digest + ".json")):
+        return
+    lock = os.path.join(STATE_DIR, digest + ".lock")
+    if not watchers.acquire_lock(lock, LOCK_WAIT_SECONDS):
+        return
+    try:
+        leave_session(project)
+    finally:
+        watchers.release_lock(lock)
 
 
 if __name__ == "__main__":
