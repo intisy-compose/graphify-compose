@@ -66,9 +66,15 @@ A watcher's state is `.watchers/<digest>.json`, the digest being the first 12 he
 of the project's absolute path: lowercased on Windows, as given on Linux, the way the hooks'
 `os.path.normcase` does it. `watch` on a project that already has a live watcher keeps that one, and
 two `watch` of one project at once, from either CLI, start one watcher: the second waits for the first.
+A lock left by a `watch` that was killed is broken after a minute, renamed aside before it is removed
+so that only one waiting `watch` takes it. A persistent watcher ends itself once its state file is gone
+or names another runner; a file that names no valid pid, as one being rewritten does, ends nothing.
 `down` stops every watcher before the stack, and a watcher ends itself, removing its state file, once
 two checks a minute apart find `graphify-server` missing or stopped (one miss is a `restart` or a
-`rebuild`; not while Docker itself is down), so none outlives the stack.
+`rebuild`; not while Docker itself is down), so none outlives the stack. A `down` that runs while a
+`watch` is starting can miss the new runner, whose state file appears a few milliseconds (sh) to about a
+second (ps1) after `watch` launches it; that runner ends itself by the same two checks, within about
+two minutes.
 
 A pid in a state file is trusted only while its process runs this stack's watcher runner with that
 project as its argument and started before the file was written; otherwise the process is left alone
