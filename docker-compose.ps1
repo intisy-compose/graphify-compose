@@ -88,8 +88,10 @@ function Connect-Tailnet {
     Write-Err "the explorers are on localhost only. Check '.\docker-compose.ps1 logs'."
 }
 
-# A watcher that cannot be stopped must not keep the stack running.
+# A watcher that cannot be stopped must not keep the stack running. The helper runs without strict
+# mode, as every helper does through Invoke-Helper: state files differ in which fields they carry.
 function Stop-AllWatchers {
+    Set-StrictMode -Off
     $stopped = $true
     $global:LASTEXITCODE = 0
     try { & (Join-Path $PSScriptRoot "scripts\watch-stop.ps1") -All; $stopped = $LASTEXITCODE -eq 0 }

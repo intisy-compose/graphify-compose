@@ -64,7 +64,7 @@ function Test-SamePath([string]$First, [string]$Second) {
 function Test-IsRunnerOf([string]$StackFolder, [string]$Path, [string[]]$Arguments) {
     $runners = @((Join-Path $StackFolder 'scripts\watch-runner.ps1'), (Join-Path $StackFolder 'scripts\watch-runner.sh'))
     for ($index = 0; $index + 1 -lt $Arguments.Count; $index++) {
-        $isRunner = ($runners | Where-Object { Test-SamePath $Arguments[$index] $_ }).Count -gt 0
+        $isRunner = @($runners | Where-Object { Test-SamePath $Arguments[$index] $_ }).Count -gt 0
         if ($isRunner -and (Test-SamePath $Arguments[$index + 1] $Path)) { return $true }
     }
     return $false
