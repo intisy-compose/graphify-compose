@@ -78,4 +78,4 @@ function Start-Watcher {
 
 if (-not (Enter-WatchLock $lock)) { throw "Another watch of $resolved is still starting; try again." }
 try { Start-Watcher }
-finally { Remove-Item $lock -Force -ErrorAction SilentlyContinue }
+finally { Exit-WatchLock $lock }

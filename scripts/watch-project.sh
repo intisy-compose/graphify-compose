@@ -56,7 +56,7 @@ state_file="$state_folder/$digest.json"
 log_file="$state_folder/$digest.log"
 lock="$state_folder/$digest.lock"
 acquire_lock "$lock" || fail "Another watch of $resolved is still starting; try again."
-trap 'rmdir "$lock" 2>/dev/null' EXIT
+trap 'release_lock "$lock"' EXIT
 if [ -f "$state_file" ] && is_live_watcher "$state_file" "$stack"; then
     printf '\033[32m%s\033[0m\n' "Already watching $resolved"
     exit 0
