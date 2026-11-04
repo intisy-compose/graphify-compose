@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stands in for curl: appends "curl ARGUMENTS" to $FAKE_DOCKER_DIR/calls and answers the status code
+# from the fake's state: mcp-status for :8770, candidate-status for :18770 (default 401 each). 000
+# answers as a refused connection does, with exit 7.
+set -uo pipefail
+state=${FAKE_DOCKER_DIR:?}
+printf 'curl %s\n' "$*" >>"$state/calls"
+url=${!#}
+case "$url" in
+    *:18770/*) status=$(cat "$state/candidate-status" 2>/dev/null || echo 401) ;;
+    *) status=$(cat "$state/mcp-status" 2>/dev/null || echo 401) ;;
+esac
+printf '%s' "$status"
+[ "$status" != 000 ] || exit 7

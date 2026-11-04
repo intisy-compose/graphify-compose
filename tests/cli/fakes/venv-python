@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Stands in for the venv's python, copied into a scratch stack's venv. It appends
+# "venv-python ARGUMENTS | cwd=... | limit=..." to $FAKE_DOCKER_DIR/calls and answers:
+#   -m graphify update PATH  writes graphify-out/graph.json under its working folder, unless the state
+#                            names update-exit (exit with it) or no-graph (write nothing)
+#   -m graphify watch PATH   writes its pid to watch-pid and runs until it is killed ($REAL_SLEEP)
+set -uo pipefail
+state=${FAKE_DOCKER_DIR:?}
+printf 'venv-python %s | cwd=%s | limit=%s\n' "$*" "$PWD" "${GRAPHIFY_VIZ_NODE_LIMIT:-}" >>"$state/calls"
+[ "${1:-}" = -m ] && [ "${2:-}" = graphify ] || exit 2
+case "${3:-}" in
+    update)
+        [ ! -f "$state/update-exit" ] || exit "$(cat "$state/update-exit")"
+        [ -f "$state/no-graph" ] || { mkdir -p graphify-out && : >graphify-out/graph.json; } ;;
+    watch)
+        printf '%s' "$$" >"$state/watch-pid"
+        exec "${REAL_SLEEP:?}" 300 ;;
+    *) exit 2 ;;
+esac
