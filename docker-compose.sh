@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # The Linux CLI, with the same commands and messages as docker-compose.ps1.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 3 ]; }; then
+    echo "docker-compose.sh needs bash 4.3 or newer; this is bash $BASH_VERSION" >&2
+    exit 1
+fi
 set -euo pipefail
 # Empty: every command has a Linux form. healthcheck works around Docker Desktop's port proxy and does
 # nothing on a Docker Engine host, but it stays for parity, with no timer, as on Windows.
