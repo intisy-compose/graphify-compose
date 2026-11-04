@@ -7,6 +7,8 @@
   target has a graph, then runs `graphify watch`, which rebuilds graph.json + graph.html
   in-place on every code change. The MCP server hot-reloads the file on its next query,
   so no container restart is needed. Meant to run in the background; not called directly.
+  It ends itself, and removes its state file, once two checks in a row find graphify-server missing
+  or stopped (one miss is a restart or a rebuild), but not while Docker itself is down.
 
 .PARAMETER TargetPath
   Absolute path to the project folder to watch.
@@ -41,16 +43,19 @@ function Test-StackIsGone {
 function Remove-OwnStateFile {
     $stateDir = Join-Path $scriptDir '.watchers'
     Get-ChildItem -Path $stateDir -Filter '*.json' -ErrorAction SilentlyContinue |
-        Where-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).pid -eq $PID } |
+        Where-Object { try { (Get-Content $_.FullName -Raw | ConvertFrom-Json).pid -eq $PID } catch { $false } } |
         Remove-Item -Force
 }
 
 $watcher = Start-Process -FilePath $venvPython -ArgumentList @('-m', 'graphify', 'watch', "`"$TargetPath`"") -NoNewWindow -PassThru
+$misses = 0
 while (-not $watcher.HasExited) {
-    if (Test-StackIsGone) {
+    if (Test-StackIsGone) { $misses++ } else { $misses = 0 }
+    if ($misses -ge 2) {
         taskkill /PID $watcher.Id /T /F 2>$null | Out-Null
         Remove-OwnStateFile
         exit 0
     }
     Start-Sleep -Seconds 60
 }
+Remove-OwnStateFile

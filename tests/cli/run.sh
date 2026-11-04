@@ -13,7 +13,8 @@ stack="$scratch/graphify-compose"
 state="$scratch/state"
 projects="$scratch/Projects"
 REAL_SLEEP=$(command -v sleep)
-export REAL_SLEEP
+REAL_MV=$(command -v mv)
+export REAL_SLEEP REAL_MV
 
 failures=0
 case_name=""
@@ -22,16 +23,21 @@ output=""
 status=0
 extra_path=""
 
-# stop_leftovers: ends every runner and fake graphify a case left, so none outlives the suite. Each
-# runner wrote its pid to a .log.pid file, which stays when the runner removed its state file.
+# stop_leftovers: ends every runner, fake graphify and stand-in process a case started, so none
+# outlives the suite: the runners' pids as state files gave them, the rest as local pids.
 stop_leftovers() {
-    local file pid
-    for file in "$stack"/.watchers/*.log.pid; do
-        [ -f "$file" ] || continue
-        pid=$(cat "$file")
-        [ -z "$pid" ] || in_lib stop_process_tree "$pid"
-    done
-    pid=$(cat "$state/watch-pid" 2>/dev/null) && kill "$pid" 2>/dev/null
+    local pid
+    while read -r pid; do in_lib end_process_tree "$pid"; done < <(cat "$scratch/pids" 2>/dev/null)
+    while read -r pid; do end_local "$pid"; done < <(cat "$state/watch-pids" "$scratch/local-pids" 2>/dev/null)
+    rm -f "$scratch/pids" "$scratch/local-pids"
+    return 0
+}
+
+end_local() {
+    local windows_pid
+    windows_pid=$(in_lib state_pid_of "$1")
+    [ -z "$windows_pid" ] || in_lib end_process_tree "$windows_pid"
+    kill -KILL "$1" 2>/dev/null
     return 0
 }
 trap 'stop_leftovers; rm -rf "$scratch"' EXIT
@@ -72,6 +78,7 @@ begin() {
     output=""
     extra_path=""
     check_seconds=60
+    rm -rf "$scratch/fake-tools"
     new_stack
 }
 
@@ -125,8 +132,16 @@ called_before() {
     [ -n "$first" ] && [ -n "$second" ] && [ "$first" -lt "$second" ]
 }
 
-# with_short_checks: a watcher the next run_cli starts checks the stack every 0.2 s, not every 60 s.
-with_short_checks() { check_seconds=0.2; }
+# with_short_checks: a watcher the next run_cli starts checks the stack every second, not every 60 s.
+with_short_checks() { check_seconds=1; }
+
+# with_fake TOOL BODY: TOOL on the next run_cli's PATH runs the bash BODY.
+with_fake() {
+    mkdir -p "$scratch/fake-tools"
+    printf '%s\n' '#!/bin/bash' "$2" >"$scratch/fake-tools/$1"
+    chmod +x "$scratch/fake-tools/$1"
+    extra_path="$scratch/fake-tools"
+}
 
 # text_called_before FIRST SECOND: as called_before, with plain text, which a Windows path needs.
 text_called_before() {
@@ -168,7 +183,13 @@ print(hook.digest_for(sys.argv[2]))' "$(native_path "$repository/hooks/session-e
 state_files() { find "$stack/.watchers" -name '*.json' 2>/dev/null; }
 state_file_count_is() { [ "$(state_files | wc -l)" -eq "$1" ]; }
 the_state_file() { native_path "$(state_files | head -n 1)"; }
-state_pid() { in_lib state_field "$(the_state_file)" pid; }
+# state_pid: the pid of the case's state file, recorded so stop_leftovers ends it whatever happens.
+state_pid() {
+    local pid
+    pid=$(in_lib state_pid "$(the_state_file)") || return 1
+    echo "$pid" >>"$scratch/pids"
+    echo "$pid"
+}
 alive() { in_lib process_is_alive "$1"; }
 dead() { ! alive "$1"; }
 local_alive() { kill -0 "$1" 2>/dev/null; }
@@ -187,10 +208,22 @@ watch_pid() { cat "$state/watch-pid"; }
 
 # start_watcher [PATH]: pins a watcher on PATH (the scratch project by default) and waits for graphify.
 start_watcher() {
+    local file
     rm -f "$state/watch-pid"
     run_cli watch "${1:-$projects/My-Project}"
+    for file in "$stack"/.watchers/*.json; do
+        [ -f "$file" ] && in_lib state_pid "$file" >>"$scratch/pids"
+    done
     wait_for watch_started
 }
+
+# runner_sleeps RUNNER: the runner, by its state file's pid, has a sleep among its children.
+runner_sleeps() {
+    local local_pid=$1
+    if [ -n "${MSYSTEM:-}" ]; then local_pid=$(ps | awk -v winpid="$1" '$4 == winpid { print $1 }'); fi
+    ps -ef | awk -v parent="$local_pid" '$3 == parent' | grep -q sleep
+}
+runner_does_not_sleep() { ! runner_sleeps "$1"; }
 
 ## Skeleton
 
@@ -499,6 +532,47 @@ finish
 
 ## watchers
 
+# start_stand_in COMMAND...: a detached process that is no watcher of this stack; prints its pid as a state
+# file would give it.
+start_stand_in() {
+    local local_pid
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "$@" </dev/null >/dev/null 2>&1 &
+    else
+        "$@" </dev/null >/dev/null 2>&1 &
+    fi
+    local_pid=$!
+    echo "$local_pid" >>"$scratch/local-pids"
+    "$REAL_SLEEP" 0.5
+    in_lib state_pid_of "$local_pid"
+}
+
+state_file_of() {
+    mkdir -p "$stack/.watchers"
+    echo "$stack/.watchers/$(in_lib watcher_digest "$1").json"
+}
+
+# write_ps1_state PATH PID: a state file as docker-compose.ps1 writes it, indented, with CRLF and a
+# byte order mark.
+write_ps1_state() {
+    mkdir -p "$stack/.watchers"
+    printf '\xEF\xBB\xBF{\r\n    "path":  "%s",\r\n    "pid":  %s,\r\n    "refs":  1,\r\n    "persistent":  true\r\n}\r\n' \
+        "${1//\\/\\\\}" "$2" >"$(state_file_of "$1")"
+}
+
+# kill_runner_only PID: kills the runner outright, as an OOM kill or a crash would, leaving graphify.
+kill_runner_only() {
+    if [ -n "${MSYSTEM:-}" ]; then MSYS_NO_PATHCONV=1 taskkill /F /PID "$1" >/dev/null 2>&1; else kill -KILL "$1"; fi
+}
+
+calls_matching() { grep -cE -- "$1" "$state/calls"; }
+
+calls_between() {
+    local count
+    count=$(calls_matching "$1")
+    [ "$count" -ge "$2" ] && [ "$count" -le "$3" ]
+}
+
 begin "the watcher's state file is named as the hooks name it"
 mkdir -p "$projects/Mixed-Case Folder"
 start_watcher "$projects/Mixed-Case Folder"
@@ -514,12 +588,13 @@ check "exits 0" status_is 0
 check "graphify watch runs" watch_started
 check "says so" said "Pinned persistent watcher (pid $(state_pid)) on $project"
 check "and how to stop it" said "Stop it with: ./docker-compose.sh watch-stop \"$project\""
-check "the path" [ "$(in_lib state_field "$file" path)" = "$project" ]
-check "persistent" [ "$(in_lib state_field "$file" persistent)" = True ]
-check "one ref" [ "$(in_lib state_field "$file" refs)" = 1 ]
+check "the path" [ "$(in_lib state_path "$file")" = "$project" ]
+check "persistent" [ "$(in_lib state_value "$file" persistent)" = true ]
+check "one ref" [ "$(in_lib state_value "$file" refs)" = 1 ]
 check "the runner lives" alive "$(state_pid)"
 check "built the graph first" text_called_before "venv-python -m graphify update $project |" "venv-python -m graphify watch $project |"
 check "outlives the CLI" local_alive "$(watch_pid)"
+check "leaves no pid file" [ -z "$(find "$stack/.watchers" -name '*.pid')" ]
 finish
 
 begin "watch does not rebuild a project that has a graph"
@@ -539,6 +614,44 @@ check "says how" said "Usage: ./docker-compose.sh watch <path>"
 check "no state" state_file_count_is 0
 finish
 
+begin "watch refuses without the venv and starts nothing"
+rm -rf "$stack/venv"
+run_cli watch "$projects/My-Project"
+check "exits 1" status_is 1
+check "says so" said "graphify venv not found at"
+check "no state" state_file_count_is 0
+check "no graphify" not_called "graphify watch"
+finish
+
+begin "a second watch on the same project keeps the first watcher"
+start_watcher
+runner=$(state_pid)
+run_cli watch "$projects/My-Project"
+check "exits 0" status_is 0
+check "says so" said "Already watching $(in_lib resolve_project "$projects/My-Project")"
+check "the first runner lives" alive "$runner"
+check "it is still the one on record" [ "$(state_pid)" = "$runner" ]
+check "one graphify only" [ "$(calls_matching 'graphify watch')" -eq 1 ]
+finish
+
+begin "watch fails, and leaves no state, when the runner dies after writing its state"
+with_fake mv 'kill -KILL "$PPID"; exec "$REAL_MV" "$@"'
+run_cli watch "$projects/My-Project"
+check "exits 1" status_is 1
+check "says so" said "The watcher did not start; see"
+check "no state" state_file_count_is 0
+check "no graphify" not_called "graphify watch"
+finish
+
+begin "watch fails after 10 s, and ends the runner, when no state appears"
+with_fake mv 'echo $$ >>"$FAKE_DOCKER_DIR/watch-pids"; echo $$ >"$FAKE_DOCKER_DIR/hung-pid"; "$REAL_SLEEP" 60'
+run_cli watch "$projects/My-Project"
+check "exits 1" status_is 1
+check "says so" said "The watcher did not start; see"
+check "the hung runner was ended" wait_for local_dead "$(cat "$state/hung-pid")"
+check "no state" state_file_count_is 0
+finish
+
 begin "watch-list says when there is none, and shows each watcher alive or not"
 run_cli watch-list
 check "none" said "No watchers."
@@ -547,7 +660,7 @@ runner=$(state_pid)
 run_cli watch-list
 check "the header" said "Pid     Alive Persistent Refs Project"
 check "alive" grep -qE "^$runner +True +True +1 +.*My-Project$" <<<"$output"
-in_lib stop_process_tree "$runner"
+in_lib end_process_tree "$runner"
 run_cli watch-list
 check "dead" grep -qE "^$runner +False " <<<"$output"
 run_cli watch-list --all
@@ -592,21 +705,80 @@ done
 finish
 
 begin "watch-stop and watch-list read a state file the ps1 wrote, byte order mark and all"
-mkdir -p "$stack/.watchers"
 project=$(in_lib resolve_project "$projects/My-Project")
-digest=$(in_lib watcher_digest "$project")
-python3 -c 'import json, sys
-with open(sys.argv[1], "w", encoding="utf-8-sig") as handle:
-    json.dump({"path": sys.argv[2], "pid": 999999, "refs": 1, "persistent": True}, handle, indent=4)' \
-    "$(native_path "$stack/.watchers/$digest.json")" "$project"
+write_ps1_state "$project" 999999
 run_cli watch-list
 check "lists it as dead" grep -qE "^999999 +False +True +1 " <<<"$output"
+check "with its path" said "$project"
 run_cli watch-stop "$projects/My-Project"
 check "stops it" said "Stopped watcher (pid 999999) for $project"
 check "the state file is gone" state_file_count_is 0
 finish
 
-begin "a watcher ends itself once graphify-server is stopped"
+begin "a state file naming another live process leaves that process alone"
+project=$(in_lib resolve_project "$projects/My-Project")
+stand_in=$(start_stand_in "$REAL_SLEEP" 300)
+in_lib write_state "$(state_file_of "$project")" "$project" "$stand_in"
+run_cli watch-stop "$projects/My-Project"
+check "exits 0" status_is 0
+check "says the state was stale" said "Removed stale watcher state for $project: pid $stand_in is not its watcher"
+check "the process lives" alive "$stand_in"
+check "the state file is gone" state_file_count_is 0
+in_lib write_state "$(state_file_of "$project")" "$project" "$stand_in"
+run_cli down
+check "down exits 0" status_is 0
+check "down still stops the stack" called "^compose down$"
+check "the process still lives" alive "$stand_in"
+finish
+
+begin "a state file written before its process started is not that process's"
+start_watcher
+runner=$(state_pid)
+touch -d "@$(($(date +%s) - 3600))" "$(state_files | head -n 1)"
+run_cli watch-stop "$projects/My-Project"
+check "says the state was stale" said "is not its watcher"
+check "the runner was left alone" alive "$runner"
+finish
+
+begin "down ends a watcher the ps1 or a hook started"
+mkdir -p "$scratch/stand-in"
+printf '%s\n' '#!/bin/bash' 'while :; do "$REAL_SLEEP" 1; done' >"$scratch/stand-in/watch-runner.ps1"
+project=$(in_lib resolve_project "$projects/My-Project")
+ps1_runner=$(start_stand_in bash "$scratch/stand-in/watch-runner.ps1" "$project")
+write_ps1_state "$project" "$ps1_runner"
+run_cli down
+check "exits 0" status_is 0
+check "says so" said "Stopped watcher (pid $ps1_runner) for $project"
+check "its runner is gone" wait_for dead "$ps1_runner"
+check "the state file is gone" state_file_count_is 0
+finish
+
+begin "watch-stop ends graphify when its runner was killed outright"
+start_watcher
+runner=$(state_pid)
+graphify=$(watch_pid)
+kill_runner_only "$runner"
+check "the runner died" wait_for dead "$runner"
+check "graphify outlived it" local_alive "$graphify"
+run_cli watch-stop "$projects/My-Project"
+check "says so" said "Stopped watcher (pid $runner)"
+check "graphify is gone" wait_for local_dead "$graphify"
+check "the state file is gone" state_file_count_is 0
+finish
+
+begin "down stops the stack despite a broken state file and without python3"
+with_fake python3 'exit 127'
+start_watcher
+runner=$(state_pid)
+printf 'not json' >"$stack/.watchers/0123456789ab.json"
+run_cli down
+check "exits 0" status_is 0
+check "warns about the broken file" said "it is not a watcher state file"
+check "stops the watcher it can" wait_for dead "$runner"
+check "still stops the stack" called "^compose down$"
+finish
+
+begin "a watcher ends itself after two checks in a row find graphify-server stopped"
 with_short_checks
 start_watcher
 runner=$(state_pid)
@@ -618,15 +790,25 @@ check "graphify ends" wait_for local_dead "$graphify"
 check "its state file is gone" wait_for state_file_count_is 0
 finish
 
-begin "a watcher ends itself once graphify-server is missing"
+begin "a watcher ends itself after two checks in a row find graphify-server missing"
 with_short_checks
+set_state server-states missing missing
 start_watcher
 runner=$(state_pid)
-graphify=$(watch_pid)
-set_state server-running missing
 check "the runner ends" wait_for dead "$runner"
-check "graphify ends" wait_for local_dead "$graphify"
+check "graphify ends" wait_for local_dead "$(watch_pid)"
 check "its state file is gone" wait_for state_file_count_is 0
+finish
+
+begin "one missed check, as during a restart, keeps the watcher"
+with_short_checks
+set_state server-states false
+start_watcher
+runner=$(state_pid)
+"$REAL_SLEEP" 4
+check "the blip was seen" [ "$(calls_matching '^inspect ')" -ge 3 ]
+check "the runner lives" alive "$runner"
+check "its state file stays" state_file_count_is 1
 finish
 
 begin "a watcher keeps running while Docker itself is down"
@@ -635,12 +817,42 @@ set_state info-exit 1
 set_state server-running missing
 start_watcher
 runner=$(state_pid)
-"$REAL_SLEEP" 2
+"$REAL_SLEEP" 3
 check "the runner lives" alive "$runner"
 check "graphify lives" local_alive "$(watch_pid)"
 check "its state file stays" state_file_count_is 1
 check "its pause leaves no file" [ -z "$(find "$stack/.watchers" -name 'pause.*')" ]
-check "it waits without a sleep process" bash -c '! ps -ef | grep -qE "[s]leep 0\.2$"'
+check "it waits without a sleep process" runner_does_not_sleep "$runner"
+finish
+
+begin "a watcher whose graphify exits removes its state file"
+with_short_checks
+start_watcher
+runner=$(state_pid)
+kill -KILL "$(watch_pid)"
+check "the runner ends" wait_for dead "$runner"
+check "its state file is gone" wait_for state_file_count_is 0
+finish
+
+begin "a watcher that cannot open its FIFO waits with sleep instead of spinning"
+with_short_checks
+with_fake mkfifo 'exit 1'
+set_state info-exit 1
+start_watcher
+runner=$(state_pid)
+"$REAL_SLEEP" 3.5
+check "the runner lives" alive "$runner"
+check "checks about once a second" calls_between '^info$' 2 6
+check "says why" grep -qF "Could not open the pause FIFO; waiting with sleep." "$stack"/.watchers/*.log.err
+finish
+
+begin "a check interval that is not a whole number of seconds is 60 s"
+check_seconds=0.2
+set_state info-exit 1
+start_watcher
+"$REAL_SLEEP" 3
+check "one check so far" [ "$(calls_matching '^info$')" -eq 1 ]
+check "says why" grep -qF "WATCH_CHECK_SECONDS=0.2 is not a whole number of seconds above 0; checking every 60 s." "$stack"/.watchers/*.log.err
 finish
 
 ## healthcheck

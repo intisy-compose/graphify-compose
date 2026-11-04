@@ -29,10 +29,7 @@ done
 [ -n "$target" ] || fail "Usage: ./docker-compose.sh regraph <path> [--force]"
 
 assert_prerequisites() {
-    if [ ! -x "$python" ]; then
-        is_windows_host || fail "graphify venv not found at $python (is the venv intact?) - on Linux, create it as 'The host venv' in CONTENT.md says."
-        fail "graphify venv not found at $python (is the venv intact?)"
-    fi
+    require_venv "$python" || exit 1
     [ -d "$target" ] || fail "Target code folder not found: $target"
 }
 
