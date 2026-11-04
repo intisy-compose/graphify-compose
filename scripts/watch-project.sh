@@ -19,9 +19,9 @@ fail() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 start_detached() {
     local log=$1 project=$2
     if command -v setsid >/dev/null 2>&1; then
-        setsid nohup bash "$runner" "$project" >"$log" 2>"$log.err" </dev/null &
+        setsid nohup bash "$runner" "$project" --persistent >"$log" 2>"$log.err" </dev/null &
     else
-        nohup bash "$runner" "$project" >"$log" 2>"$log.err" </dev/null &
+        nohup bash "$runner" "$project" --persistent >"$log" 2>"$log.err" </dev/null &
     fi
 }
 

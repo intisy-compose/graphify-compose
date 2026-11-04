@@ -172,13 +172,12 @@ ps1_commands() {
 # native_path PATH: PATH as the hooks get it from Claude Code on this OS.
 native_path() { if [ -n "${MSYSTEM:-}" ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
 
-# hook_digest PATH: the state file name hooks/session-end.py gives a session in PATH.
+# hook_digest PATH: the state file name the session hooks give a session in PATH.
 hook_digest() {
-    python3 -c 'import importlib.util, sys
-spec = importlib.util.spec_from_file_location("session_end", sys.argv[1])
-hook = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(hook)
-print(hook.digest_for(sys.argv[2]))' "$(native_path "$repository/hooks/session-end.py")" "$(native_path "$1")"
+    python3 -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import watchers
+print(watchers.digest_for(sys.argv[2]))' "$(native_path "$repository/hooks")" "$(native_path "$1")"
 }
 
 state_files() { find "$stack/.watchers" -name '*.json' 2>/dev/null; }
@@ -753,6 +752,81 @@ check "says so" said "Stopped watcher (pid $ps1_runner) for $project"
 check "its runner is gone" wait_for dead "$ps1_runner"
 check "the state file is gone" state_file_count_is 0
 finish
+
+# run_hook NAME PATH: runs hooks/NAME.py on a session in PATH, as Claude Code does, against the scratch
+# stack and its fakes.
+run_hook() {
+    cp "$repository"/hooks/*.py "$stack/hooks/"
+    mkdir -p "$2/.git"
+    printf '{"cwd": "%s"}' "$2" | PATH="$fakes:$PATH" FAKE_DOCKER_DIR="$state" GRAPHIFY_DIR="$stack"         GRAPHIFY_PROJECTS_ROOT="$projects" WATCH_CHECK_SECONDS="$check_seconds" python3 "$stack/hooks/$1.py"
+}
+
+# start_session_watcher: a session in the scratch project starts its watcher through the hook.
+start_session_watcher() {
+    rm -f "$state/watch-pid"
+    run_hook session-start "$projects/My-Project"
+    state_pid >/dev/null
+    wait_for watch_started
+}
+
+begin "the hooks' unit tests pass"
+output=$(cd "$repository" && python3 -m unittest discover -s tests/hooks 2>&1)
+check "python3 -m unittest discover -s tests/hooks" grep -qE '^OK( |$)' <<<"$output"
+finish
+
+if [ -n "${MSYSTEM:-}" ]; then
+    echo "skip the hook cases: on Windows the hooks start the ps1 runner, which runs no fake venv"
+else
+    begin "two sessions share the watcher a hook started; the last session end stops it"
+    start_session_watcher
+    file=$(the_state_file)
+    runner=$(state_pid)
+    graphify=$(watch_pid)
+    check "graphify watch runs" local_alive "$graphify"
+    check "the runner lives" alive "$runner"
+    check "a session watcher" [ -z "$(in_lib state_value "$file" persistent)" ]
+    check "one ref" [ "$(in_lib state_value "$file" refs)" = 1 ]
+    check "the CLI takes it for its watcher" in_lib is_live_watcher "$file" "$stack"
+    run_hook session-start "$projects/My-Project"
+    check "the second session reuses it" [ "$(in_lib state_pid "$file")" = "$runner" ]
+    check "two refs" [ "$(in_lib state_value "$file" refs)" = 2 ]
+    run_hook session-end "$projects/My-Project"
+    check "one session end leaves it" alive "$runner"
+    check "one ref left" [ "$(in_lib state_value "$file" refs)" = 1 ]
+    run_hook session-end "$projects/My-Project"
+    check "the last ends the runner" wait_for dead "$runner"
+    check "and graphify" wait_for local_dead "$graphify"
+    check "no state file left" state_file_count_is 0
+    check "no lock left" [ -z "$(find "$stack/.watchers" -name '*.lock*')" ]
+    finish
+
+    begin "down stops a watcher a hook started"
+    start_session_watcher
+    runner=$(state_pid)
+    graphify=$(watch_pid)
+    run_cli down
+    check "exits 0" status_is 0
+    check "says it stopped it" said "Stopped watcher (pid $runner) for $projects/My-Project"
+    check "the runner is gone" wait_for dead "$runner"
+    check "graphify is gone" wait_for local_dead "$graphify"
+    check "no state file left" state_file_count_is 0
+    check "compose down" called "^compose down$"
+    finish
+
+    begin "watch-stop stops a watcher a hook started"
+    start_session_watcher
+    runner=$(state_pid)
+    graphify=$(watch_pid)
+    run_cli watch-stop "$projects/My-Project"
+    check "exits 0" status_is 0
+    check "says it stopped it" said "Stopped watcher (pid $runner) for $projects/My-Project"
+    check "the runner is gone" wait_for dead "$runner"
+    check "graphify is gone" wait_for local_dead "$graphify"
+    check "no state file left" state_file_count_is 0
+    run_hook session-end "$projects/My-Project"
+    check "a session end after it changes nothing" state_file_count_is 0
+    finish
+fi
 
 begin "watch-stop ends graphify when its runner was killed outright"
 start_watcher
