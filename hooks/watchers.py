@@ -25,6 +25,16 @@ END_WAIT_SECONDS = 5
 ProcessRecord = collections.namedtuple("ProcessRecord", ["start_seconds", "arguments"])
 
 
+def read_session_cwd(stream=None):
+    """The session's folder from the hook payload Claude Code sends on stdin, or this process's.
+    utf-8-sig, because a PowerShell pipe adds a byte order mark."""
+    stream = stream or sys.stdin.buffer
+    try:
+        return json.loads(stream.read().decode("utf-8-sig")).get("cwd") or os.getcwd()
+    except Exception:
+        return os.getcwd()
+
+
 def path_rules(windows=IS_WINDOWS):
     return ntpath if windows else posixpath
 

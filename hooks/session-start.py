@@ -9,7 +9,6 @@ watcher pinned by `watch` is reused as it is. Only spawns and returns; exits 0 o
 unexpected so it never blocks session startup.
 """
 import glob
-import json
 import os
 import subprocess
 import sys
@@ -48,13 +47,6 @@ def read_env_file_value(key):
 
 def projects_root():
     return os.environ.get("GRAPHIFY_PROJECTS_ROOT") or read_env_file_value("PROJECTS_ROOT")
-
-
-def read_cwd():
-    try:
-        return json.load(sys.stdin).get("cwd") or os.getcwd()
-    except Exception:
-        return os.getcwd()
 
 
 def is_project(cwd):
@@ -123,7 +115,7 @@ def join_session(project, windows=watchers.IS_WINDOWS):
 def main():
     heal_graphify()  # keep the MCP reachable before anything else needs it
 
-    cwd = read_cwd()
+    cwd = watchers.read_session_cwd()
     if not is_project(cwd):
         return
     project = os.path.abspath(cwd)
