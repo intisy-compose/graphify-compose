@@ -66,8 +66,11 @@ A watcher's state is `.watchers/<digest>.json`, the digest being the first 12 he
 of the project's absolute path: lowercased on Windows, as given on Linux, the way the hooks'
 `os.path.normcase` does it. `watch` on a project that already has a live watcher keeps that one, and
 two `watch` of one project at once, from either CLI, start one watcher: the second waits for the first.
-A lock left by a `watch` that was killed is broken after a minute, renamed aside before it is removed
-so that only one waiting `watch` takes it. A persistent watcher ends itself once its state file is gone
+The lock is `.watchers/<digest>.lock/owner`, created exclusively and holding the pid of the `watch`
+that holds it; creating the folder decides nothing, since uutils `mkdir` (Ubuntu 26.04's) and
+PowerShell's `New-Item` both succeed for a folder another process created a moment before. A lock left
+by a `watch` that was killed is broken once its owner file (or a folder with none) is a minute old,
+renamed aside before it is removed so that only one waiting `watch` takes it. A persistent watcher ends itself once its state file is gone
 or names another runner; a file that names no valid pid, as one being rewritten does, ends nothing.
 `down` stops every watcher before the stack, and a watcher ends itself, removing its state file, once
 two checks a minute apart find `graphify-server` missing or stopped (one miss is a `restart` or a
