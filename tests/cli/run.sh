@@ -119,6 +119,7 @@ check() {
 status_is() { [ "$status" -eq "$1" ]; }
 said() { grep -qF -- "$1" <<<"$output"; }
 not_said() { ! said "$1"; }
+not() { ! "$@"; }
 called() { grep -qE -- "$1" "$state/calls"; }
 not_called() { ! called "$1"; }
 env_has() { grep -qxF -- "$1" "$stack/.env"; }
@@ -944,6 +945,64 @@ term_runner_only "$runner"
 check "the runner ends" wait_for dead "$runner"
 check "graphify ends" wait_for local_dead "$graphify"
 check "its state file is gone" wait_for state_file_count_is 0
+finish
+
+## the watch lock
+
+lock_folder() { echo "$stack/.watchers/project.lock"; }
+make_lock() { mkdir -p "$(lock_folder)" && touch -d "${1:-now}" "$(lock_folder)"; }
+# acquire_without_waiting: acquire_lock on the case's lock, its 15 s of retries run through at once.
+acquire_without_waiting() {
+    without_sleep
+    PATH="$scratch/no-sleep:$PATH" in_lib acquire_lock "$(lock_folder)"
+}
+no_broken_leftovers() { [ -z "$(find "$stack/.watchers" -maxdepth 1 -name '*.broken.*' 2>/dev/null)" ]; }
+
+begin "a stale lock is broken and taken, leaving nothing aside"
+make_lock "2 minutes ago"
+check "it counts as stale" in_lib is_stale_lock "$(lock_folder)"
+check "acquire takes it" in_lib acquire_lock "$(lock_folder)"
+check "the lock is held again" [ -d "$(lock_folder)" ]
+check "and fresh" not in_lib is_stale_lock "$(lock_folder)"
+check "nothing left aside" no_broken_leftovers
+finish
+
+begin "a fresh lock is never broken"
+make_lock
+in_lib break_stale_lock "$(lock_folder)"
+check "a breaker that took it put it back" [ -d "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+check "acquire gives up while it is held" not acquire_without_waiting
+finish
+
+begin "breaking a lock another watch already broke changes nothing"
+mkdir -p "$stack/.watchers"
+check "succeeds with no lock" in_lib break_stale_lock "$(lock_folder)"
+check "creates none" [ ! -e "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+finish
+
+begin "two watches breaking one stale lock both end up with one lock between them"
+make_lock "2 minutes ago"
+in_lib break_stale_lock "$(lock_folder)" &
+first_breaker=$!
+in_lib break_stale_lock "$(lock_folder)"
+wait "$first_breaker"
+check "the stale lock is gone" [ ! -e "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+check "one mkdir wins" in_lib acquire_lock "$(lock_folder)"
+check "the next waits" not acquire_without_waiting
+finish
+
+begin "watch takes over a lock a killed watch left"
+mkdir -p "$stack/.watchers"
+lock="$stack/.watchers/$(in_lib watcher_digest "$(in_lib resolve_project "$projects/My-Project")").lock"
+mkdir "$lock" && touch -d "2 minutes ago" "$lock"
+start_watcher
+check "exits 0" status_is 0
+check "watches" watch_started
+check "releases the lock" [ ! -e "$lock" ]
+check "nothing left aside" no_broken_leftovers
 finish
 
 ## healthcheck

@@ -16,6 +16,34 @@ function Read-WatcherState([string]$File) {
     return $state
 }
 
+# Test-StaleWatchLock FOLDER: the watch lock is older than a minute, so a watch that was killed left it.
+function Test-StaleWatchLock([string]$Lock) {
+    $held = Get-Item $Lock -ErrorAction SilentlyContinue
+    return [bool]($held -and $held.CreationTime -lt (Get-Date).AddMinutes(-1))
+}
+
+# Remove-StaleWatchLock FOLDER: renames the lock to a name of this process's own before removing it, so
+# of two watches breaking the same stale lock only one takes it. One that took a fresh lock instead, made
+# by the other in between, puts it back.
+function Remove-StaleWatchLock([string]$Lock) {
+    $aside = "$Lock.broken.$PID.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    try { [System.IO.Directory]::Move($Lock, $aside) } catch { return }
+    if (Test-StaleWatchLock $aside) { Remove-Item $aside -Force -ErrorAction SilentlyContinue; return }
+    try { [System.IO.Directory]::Move($aside, $Lock) } catch { Remove-Item $aside -Force -ErrorAction SilentlyContinue }
+}
+
+# Enter-WatchLock FOLDER: one watch of a project at a time, in either CLI, since two would each start a
+# runner. Creating a folder is atomic; the lock is taken within 15 s.
+function Enter-WatchLock([string]$Lock) {
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        try { New-Item -ItemType Directory -Path $Lock -ErrorAction Stop | Out-Null; return $true } catch { }
+        if (Test-StaleWatchLock $Lock) { Remove-StaleWatchLock $Lock; continue }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
 # Split-CommandLine LINE: the arguments as Windows splits them (CommandLineToArgvW): whitespace outside
 # quotes separates, quotes group, and backslashes are literal unless they precede a quote, where 2n give
 # n and 2n+1 give n and a literal quote.
