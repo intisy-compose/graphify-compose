@@ -1023,6 +1023,53 @@ check "releases the lock" [ ! -e "$lock" ]
 check "nothing left aside" no_broken_leftovers
 finish
 
+## windows_argv, and the ps1's Split-CommandLine where a PowerShell runs
+
+# argv_is TOKENIZER LINE ARGUMENT...: TOKENIZER splits LINE into exactly the ARGUMENTs.
+argv_is() {
+    local tokenizer=$1 line=$2 actual expected
+    shift 2
+    actual=$("$tokenizer" "$line"; echo end)
+    expected=$([ $# -eq 0 ] || printf '%s\n' "$@"; echo end)
+    [ "$actual" = "$expected" ]
+}
+sh_argv() { in_lib windows_argv "$1"; }
+powershell=$(command -v pwsh || command -v powershell.exe || true)
+ps1_argv() {
+    ARGV_LINE=$1 "$powershell" -NoProfile -NonInteractive -Command \
+        ". '$(native_path "$repository/scripts/watcher-state.ps1")'; foreach (\$argument in (Split-CommandLine \$env:ARGV_LINE)) { [Console]::Out.WriteLine(\$argument) }" |
+        tr -d '\r'
+}
+
+check_tokenizer() {
+    local tokenizer=$1
+    check "plain words" argv_is "$tokenizer" 'bash  run.sh	app' bash run.sh app
+    check "quoted paths with spaces" argv_is "$tokenizer" '"C:\Program Files\Git\bin\bash.exe" "C:\My Projects\app"' \
+        'C:\Program Files\Git\bin\bash.exe' 'C:\My Projects\app'
+    check "a quote in the middle groups" argv_is "$tokenizer" 'C:\My" "Projects\app' 'C:\My Projects\app'
+    check '\" is a literal quote' argv_is "$tokenizer" 'say \"hi\"' say '"hi"'
+    check '\\" is a backslash, then a quote that groups' argv_is "$tokenizer" 'a\\"b c"' 'a\b c'
+    check '\\\" is a backslash and a literal quote' argv_is "$tokenizer" 'a\\\"b' 'a\"b'
+    check "backslashes before no quote stay" argv_is "$tokenizer" 'C:\\share\\x y' 'C:\\share\\x' y
+    check "a trailing backslash stays" argv_is "$tokenizer" 'C:\app\ next' "C:\\app\\" next
+    check "a quoted trailing backslash, doubled" argv_is "$tokenizer" '"C:\My Projects\\" next' "C:\\My Projects\\" next
+    check "an empty argument between others" argv_is "$tokenizer" 'a "" b' a '' b
+    check "an empty argument alone" argv_is "$tokenizer" '""' ''
+    check "no arguments" argv_is "$tokenizer" '   '
+}
+
+begin "windows_argv splits a command line as Windows does"
+check_tokenizer sh_argv
+finish
+
+if [ -n "$powershell" ]; then
+    begin "the ps1's Split-CommandLine splits each line as windows_argv does"
+    check_tokenizer ps1_argv
+    finish
+else
+    echo "skip the ps1's Split-CommandLine: no PowerShell on this host"
+fi
+
 ## healthcheck
 
 begin "healthcheck stays quiet while the endpoint answers"
