@@ -16,10 +16,21 @@ function Read-WatcherState([string]$File) {
     return $state
 }
 
-# Test-StaleWatchLock FOLDER: the watch lock is older than a minute, so a watch that was killed left it.
+function Get-LockOwnerFile([string]$Lock) { return Join-Path $Lock "owner" }
+
+# Remove-WatchLockFolder FOLDER: the owner file, then the folder only if that left it empty, so a lock
+# another watch claimed in between stays.
+function Remove-WatchLockFolder([string]$Lock) {
+    try { [System.IO.File]::Delete((Get-LockOwnerFile $Lock)) } catch { }
+    try { [System.IO.Directory]::Delete($Lock) } catch { }
+}
+
+# Test-StaleWatchLock FOLDER: the owner file, or a folder with none, is older than a minute, so a watch
+# that was killed left it.
 function Test-StaleWatchLock([string]$Lock) {
-    $held = Get-Item $Lock -ErrorAction SilentlyContinue
-    return [bool]($held -and $held.CreationTime -lt (Get-Date).AddMinutes(-1))
+    $held = Get-Item -LiteralPath (Get-LockOwnerFile $Lock) -Force -ErrorAction SilentlyContinue
+    if (-not $held) { $held = Get-Item -LiteralPath $Lock -Force -ErrorAction SilentlyContinue }
+    return [bool]($held -and $held.LastWriteTime -lt (Get-Date).AddMinutes(-1))
 }
 
 # Remove-StaleWatchLock FOLDER: renames the lock to a name of this process's own before removing it, so
@@ -28,20 +39,40 @@ function Test-StaleWatchLock([string]$Lock) {
 function Remove-StaleWatchLock([string]$Lock) {
     $aside = "$Lock.broken.$PID.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     try { [System.IO.Directory]::Move($Lock, $aside) } catch { return }
-    if (Test-StaleWatchLock $aside) { Remove-Item $aside -Force -ErrorAction SilentlyContinue; return }
-    try { [System.IO.Directory]::Move($aside, $Lock) } catch { Remove-Item $aside -Force -ErrorAction SilentlyContinue }
+    if (Test-StaleWatchLock $aside) { Remove-WatchLockFolder $aside; return }
+    try { [System.IO.Directory]::Move($aside, $Lock) } catch { Remove-WatchLockFolder $aside }
+}
+
+# Request-WatchLock FOLDER: creates the owner file with CreateNew, so of any number of watches in either
+# CLI only one succeeds. Creating the folder decides nothing: New-Item, like uutils mkdir, succeeds for a
+# folder another process created a moment before.
+function Request-WatchLock([string]$Lock) {
+    try {
+        [System.IO.Directory]::CreateDirectory($Lock) | Out-Null
+        $owner = [System.IO.File]::Open((Get-LockOwnerFile $Lock), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    } catch { return $false }
+    try { $bytes = [System.Text.Encoding]::ASCII.GetBytes("$PID`n"); $owner.Write($bytes, 0, $bytes.Length) }
+    finally { $owner.Dispose() }
+    return $true
 }
 
 # Enter-WatchLock FOLDER: one watch of a project at a time, in either CLI, since two would each start a
-# runner. Creating a folder is atomic; the lock is taken within 15 s.
+# runner; the lock is taken within 15 s.
 function Enter-WatchLock([string]$Lock) {
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
-        try { New-Item -ItemType Directory -Path $Lock -ErrorAction Stop | Out-Null; return $true } catch { }
+        if (Request-WatchLock $Lock) { return $true }
         if (Test-StaleWatchLock $Lock) { Remove-StaleWatchLock $Lock; continue }
         Start-Sleep -Milliseconds 100
     }
     return $false
+}
+
+# Exit-WatchLock FOLDER: gives up the lock if this process still holds it.
+function Exit-WatchLock([string]$Lock) {
+    $owner = $null
+    try { $owner = [System.IO.File]::ReadAllText((Get-LockOwnerFile $Lock)).Trim() } catch { }
+    if ($owner -eq "$PID") { Remove-WatchLockFolder $Lock }
 }
 
 # Split-CommandLine LINE: the arguments as Windows splits them (CommandLineToArgvW): whitespace outside

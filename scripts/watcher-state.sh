@@ -113,8 +113,18 @@ write_state() {
 
 ## The watch lock: one watch of a project at a time, in either CLI, since two would each start a runner.
 
-# is_stale_lock FOLDER: the lock is older than a minute, so a watch that was killed left it.
-is_stale_lock() { [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }
+remove_lock_folder() {
+    rm -f "$1/owner"
+    rmdir "$1" 2>/dev/null
+}
+
+# is_stale_lock FOLDER: the owner file, or a folder with none, is older than a minute, so a watch that
+# was killed left it.
+is_stale_lock() {
+    local held="$1/owner"
+    [ -e "$held" ] || held=$1
+    [ -n "$(find "$held" -maxdepth 0 -mmin +1 2>/dev/null)" ]
+}
 
 # break_stale_lock FOLDER: renames the lock to a name of this process's own before removing it, so of
 # two watches breaking the same stale lock only one takes it. One that took a fresh lock instead, made
@@ -123,21 +133,35 @@ break_stale_lock() {
     local aside="$1.broken.$$.$RANDOM"
     mv -T "$1" "$aside" 2>/dev/null || return 0
     if is_stale_lock "$aside"; then
-        rmdir "$aside" 2>/dev/null
+        remove_lock_folder "$aside"
     else
-        mv -T "$aside" "$1" 2>/dev/null || rmdir "$aside" 2>/dev/null
+        mv -T "$aside" "$1" 2>/dev/null || remove_lock_folder "$aside"
     fi
     return 0
 }
 
-# acquire_lock FOLDER: takes the lock within 15 s; mkdir is atomic.
+# claim_lock FOLDER: creates the owner file with noclobber, which opens it O_EXCL, so of any number of
+# watches only one succeeds. Creating the folder decides nothing: uutils mkdir (Ubuntu 26.04's) and
+# PowerShell's New-Item both succeed for a folder another process created a moment before.
+claim_lock() { (set -C && printf '%s\n' "$$" >"$1/owner") 2>/dev/null; }
+
+# acquire_lock FOLDER: takes the lock within 15 s, or 150 tries if they come sooner. The clock bounds it
+# on Git Bash, where a try can take half a second and a held lock would turn stale while it waits.
 acquire_lock() {
+    local deadline=$((SECONDS + 15))
     for _ in $(seq 150); do
-        mkdir "$1" 2>/dev/null && return 0
+        [ "$SECONDS" -lt "$deadline" ] || return 1
+        mkdir -p "$1" 2>/dev/null && claim_lock "$1" && return 0
         if is_stale_lock "$1"; then break_stale_lock "$1"; continue; fi
         sleep 0.1
     done
     return 1
+}
+
+# release_lock FOLDER: gives up the lock if this process still holds it.
+release_lock() {
+    [ "$(cat "$1/owner" 2>/dev/null)" = "$$" ] || return 0
+    remove_lock_folder "$1"
 }
 
 ## Which process a pid is. Every comparison is of whole arguments, never of substrings: /w/app must not

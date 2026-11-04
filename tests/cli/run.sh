@@ -968,7 +968,14 @@ finish
 ## the watch lock
 
 lock_folder() { echo "$stack/.watchers/project.lock"; }
-make_lock() { mkdir -p "$(lock_folder)" && touch -d "${1:-now}" "$(lock_folder)"; }
+# write_owner PID [DATE]: the case's lock held by PID, its owner file dated DATE.
+write_owner() {
+    mkdir -p "$(lock_folder)"
+    printf '%s\n' "$1" >"$(lock_folder)/owner"
+    touch -d "${2:-now}" "$(lock_folder)/owner"
+}
+# make_lock [DATE]: the case's lock held by another watch since DATE.
+make_lock() { write_owner 4242 "${1:-now}" && touch -d "${1:-now}" "$(lock_folder)"; }
 # acquire_without_waiting: acquire_lock on the case's lock, its 15 s of retries run through at once.
 acquire_without_waiting() {
     without_sleep
@@ -1008,7 +1015,7 @@ in_lib break_stale_lock "$(lock_folder)"
 wait "$first_breaker"
 check "the stale lock is gone" [ ! -e "$(lock_folder)" ]
 check "nothing left aside" no_broken_leftovers
-check "one mkdir wins" in_lib acquire_lock "$(lock_folder)"
+check "one acquire wins" in_lib acquire_lock "$(lock_folder)"
 check "the next waits" not acquire_without_waiting
 finish
 
@@ -1021,6 +1028,37 @@ check "exits 0" status_is 0
 check "watches" watch_started
 check "releases the lock" [ ! -e "$lock" ]
 check "nothing left aside" no_broken_leftovers
+finish
+
+begin "of many acquires at once only one takes the lock"
+mkdir -p "$stack/.watchers"
+without_sleep
+acquirers=()
+for _ in $(seq 20); do
+    (PATH="$scratch/no-sleep:$PATH" in_lib acquire_lock "$(lock_folder)" && echo won >>"$scratch/winners") &
+    acquirers+=("$!")
+done
+wait "${acquirers[@]}"
+check "exactly one wins" [ "$(cat "$scratch/winners" 2>/dev/null | wc -l)" -eq 1 ]
+rm -f "$scratch/winners"
+finish
+
+begin "a held lock in a folder older than a minute is not stale"
+write_owner 4242
+touch -d "2 minutes ago" "$(lock_folder)"
+check "it does not count as stale" not in_lib is_stale_lock "$(lock_folder)"
+check "acquire gives up while it is held" not acquire_without_waiting
+check "its owner stays" [ "$(cat "$(lock_folder)/owner")" = 4242 ]
+finish
+
+begin "releasing gives up only a lock this process holds"
+write_owner 4242
+in_lib release_lock "$(lock_folder)"
+check "another's lock stays" [ "$(cat "$(lock_folder)/owner")" = 4242 ]
+rm -rf "$(lock_folder)"
+in_lib acquire_lock "$(lock_folder)"
+in_lib release_lock "$(lock_folder)"
+check "its own is gone" [ ! -e "$(lock_folder)" ]
 finish
 
 ## windows_argv, and the ps1's Split-CommandLine where a PowerShell runs
