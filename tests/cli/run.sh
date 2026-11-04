@@ -119,6 +119,7 @@ check() {
 status_is() { [ "$status" -eq "$1" ]; }
 said() { grep -qF -- "$1" <<<"$output"; }
 not_said() { ! said "$1"; }
+not() { ! "$@"; }
 called() { grep -qE -- "$1" "$state/calls"; }
 not_called() { ! called "$1"; }
 env_has() { grep -qxF -- "$1" "$stack/.env"; }
@@ -945,6 +946,129 @@ check "the runner ends" wait_for dead "$runner"
 check "graphify ends" wait_for local_dead "$graphify"
 check "its state file is gone" wait_for state_file_count_is 0
 finish
+
+begin "a runner keeps going while its state file is unreadable, and ends once it names another pid"
+with_short_checks
+start_watcher
+runner=$(state_pid)
+file=$(state_files | head -n 1)
+printf '{"path": "half a rewr' >"$file"
+"$REAL_SLEEP" 3
+check "a half-written file ends nothing" alive "$runner"
+: >"$file"
+"$REAL_SLEEP" 3
+check "nor an empty one" alive "$runner"
+printf '{"path": "x", "pid": 1, "refs": 1}' >"$file"
+"$REAL_SLEEP" 3
+check "nor a pid below 2" alive "$runner"
+printf '{"path": "x", "pid": %s, "refs": 1, "persistent": true}' "$((runner + 1))" >"$file"
+check "a different valid pid ends it" wait_for dead "$runner"
+finish
+
+## the watch lock
+
+lock_folder() { echo "$stack/.watchers/project.lock"; }
+make_lock() { mkdir -p "$(lock_folder)" && touch -d "${1:-now}" "$(lock_folder)"; }
+# acquire_without_waiting: acquire_lock on the case's lock, its 15 s of retries run through at once.
+acquire_without_waiting() {
+    without_sleep
+    PATH="$scratch/no-sleep:$PATH" in_lib acquire_lock "$(lock_folder)"
+}
+no_broken_leftovers() { [ -z "$(find "$stack/.watchers" -maxdepth 1 -name '*.broken.*' 2>/dev/null)" ]; }
+
+begin "a stale lock is broken and taken, leaving nothing aside"
+make_lock "2 minutes ago"
+check "it counts as stale" in_lib is_stale_lock "$(lock_folder)"
+check "acquire takes it" in_lib acquire_lock "$(lock_folder)"
+check "the lock is held again" [ -d "$(lock_folder)" ]
+check "and fresh" not in_lib is_stale_lock "$(lock_folder)"
+check "nothing left aside" no_broken_leftovers
+finish
+
+begin "a fresh lock is never broken"
+make_lock
+in_lib break_stale_lock "$(lock_folder)"
+check "a breaker that took it put it back" [ -d "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+check "acquire gives up while it is held" not acquire_without_waiting
+finish
+
+begin "breaking a lock another watch already broke changes nothing"
+mkdir -p "$stack/.watchers"
+check "succeeds with no lock" in_lib break_stale_lock "$(lock_folder)"
+check "creates none" [ ! -e "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+finish
+
+begin "two watches breaking one stale lock both end up with one lock between them"
+make_lock "2 minutes ago"
+in_lib break_stale_lock "$(lock_folder)" &
+first_breaker=$!
+in_lib break_stale_lock "$(lock_folder)"
+wait "$first_breaker"
+check "the stale lock is gone" [ ! -e "$(lock_folder)" ]
+check "nothing left aside" no_broken_leftovers
+check "one mkdir wins" in_lib acquire_lock "$(lock_folder)"
+check "the next waits" not acquire_without_waiting
+finish
+
+begin "watch takes over a lock a killed watch left"
+mkdir -p "$stack/.watchers"
+lock="$stack/.watchers/$(in_lib watcher_digest "$(in_lib resolve_project "$projects/My-Project")").lock"
+mkdir "$lock" && touch -d "2 minutes ago" "$lock"
+start_watcher
+check "exits 0" status_is 0
+check "watches" watch_started
+check "releases the lock" [ ! -e "$lock" ]
+check "nothing left aside" no_broken_leftovers
+finish
+
+## windows_argv, and the ps1's Split-CommandLine where a PowerShell runs
+
+# argv_is TOKENIZER LINE ARGUMENT...: TOKENIZER splits LINE into exactly the ARGUMENTs.
+argv_is() {
+    local tokenizer=$1 line=$2 actual expected
+    shift 2
+    actual=$("$tokenizer" "$line"; echo end)
+    expected=$([ $# -eq 0 ] || printf '%s\n' "$@"; echo end)
+    [ "$actual" = "$expected" ]
+}
+sh_argv() { in_lib windows_argv "$1"; }
+powershell=$(command -v pwsh || command -v powershell.exe || true)
+ps1_argv() {
+    ARGV_LINE=$1 "$powershell" -NoProfile -NonInteractive -Command \
+        ". '$(native_path "$repository/scripts/watcher-state.ps1")'; foreach (\$argument in (Split-CommandLine \$env:ARGV_LINE)) { [Console]::Out.WriteLine(\$argument) }" |
+        tr -d '\r'
+}
+
+check_tokenizer() {
+    local tokenizer=$1
+    check "plain words" argv_is "$tokenizer" 'bash  run.sh	app' bash run.sh app
+    check "quoted paths with spaces" argv_is "$tokenizer" '"C:\Program Files\Git\bin\bash.exe" "C:\My Projects\app"' \
+        'C:\Program Files\Git\bin\bash.exe' 'C:\My Projects\app'
+    check "a quote in the middle groups" argv_is "$tokenizer" 'C:\My" "Projects\app' 'C:\My Projects\app'
+    check '\" is a literal quote' argv_is "$tokenizer" 'say \"hi\"' say '"hi"'
+    check '\\" is a backslash, then a quote that groups' argv_is "$tokenizer" 'a\\"b c"' 'a\b c'
+    check '\\\" is a backslash and a literal quote' argv_is "$tokenizer" 'a\\\"b' 'a\"b'
+    check "backslashes before no quote stay" argv_is "$tokenizer" 'C:\\share\\x y' 'C:\\share\\x' y
+    check "a trailing backslash stays" argv_is "$tokenizer" 'C:\app\ next' "C:\\app\\" next
+    check "a quoted trailing backslash, doubled" argv_is "$tokenizer" '"C:\My Projects\\" next' "C:\\My Projects\\" next
+    check "an empty argument between others" argv_is "$tokenizer" 'a "" b' a '' b
+    check "an empty argument alone" argv_is "$tokenizer" '""' ''
+    check "no arguments" argv_is "$tokenizer" '   '
+}
+
+begin "windows_argv splits a command line as Windows does"
+check_tokenizer sh_argv
+finish
+
+if [ -n "$powershell" ]; then
+    begin "the ps1's Split-CommandLine splits each line as windows_argv does"
+    check_tokenizer ps1_argv
+    finish
+else
+    echo "skip the ps1's Split-CommandLine: no PowerShell on this host"
+fi
 
 ## healthcheck
 

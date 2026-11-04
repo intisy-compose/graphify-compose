@@ -52,9 +52,15 @@ end_runner() {
     [ -z "$pause_fifo" ] || rm -f "$pause_fifo"
 }
 
-# is_superseded: the state file no longer names this runner, as when two `watch` ran at once and the
-# other runner wrote last; this one is then on no record and ends itself.
-is_superseded() { [ "$(state_pid "$state_file" 2>/dev/null)" != "$own_pid" ]; }
+# is_superseded: the state file is gone or names another valid pid, as when two `watch` ran at once and
+# the other runner wrote last; this one is then on no record and ends itself. A file that is there but
+# names no valid pid is taken as being rewritten in place, as a hook may, and ends nothing.
+is_superseded() {
+    local pid
+    [ -e "$state_file" ] || return 0
+    pid=$(state_pid "$state_file" 2>/dev/null) || return 1
+    [ "$pid" != "$own_pid" ]
+}
 
 # open_pause: a FIFO nobody writes to, held open and already unlinked, which `pause` waits on. A sleep
 # child would be missed by the ps1's taskkill /T on Git Bash and outlive a stopped watcher.

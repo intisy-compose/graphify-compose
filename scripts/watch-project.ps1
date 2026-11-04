@@ -36,18 +36,6 @@ $digest = Get-WatcherDigest $resolved
 $stateFile = Join-Path $stateDir "$digest.json"
 $lock = Join-Path $stateDir "$digest.lock"
 
-# Enter-WatchLock: one watch of a project at a time, in either CLI, since two would each start a runner.
-# Creating a folder is atomic; a lock older than a minute was left by a watch that was killed.
-function Enter-WatchLock {
-    $deadline = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline) {
-        try { New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null; return $true } catch { }
-        $held = Get-Item $lock -ErrorAction SilentlyContinue
-        if ($held -and $held.CreationTime -lt (Get-Date).AddMinutes(-1)) { Remove-Item $lock -Force -ErrorAction SilentlyContinue; continue }
-        Start-Sleep -Milliseconds 100
-    }
-    return $false
-}
 
 # Wait-RunnerState PROCESS: true once the runner has recorded itself and is still that watcher, within 10 s.
 function Wait-RunnerState($Process) {
@@ -88,6 +76,6 @@ function Start-Watcher {
     Write-Host "Stop it with: .\docker-compose.ps1 watch-stop `"$resolved`"" -ForegroundColor DarkGray
 }
 
-if (-not (Enter-WatchLock)) { throw "Another watch of $resolved is still starting; try again." }
+if (-not (Enter-WatchLock $lock)) { throw "Another watch of $resolved is still starting; try again." }
 try { Start-Watcher }
 finally { Remove-Item $lock -Force -ErrorAction SilentlyContinue }

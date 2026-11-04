@@ -34,17 +34,6 @@ wait_for_state() {
     return 1
 }
 
-# acquire_lock FOLDER: one watch of a project at a time, in either CLI, since two would each start a
-# runner. mkdir is atomic; a lock older than a minute was left by a watch that was killed.
-acquire_lock() {
-    for _ in $(seq 150); do
-        mkdir "$1" 2>/dev/null && return 0
-        if [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rmdir "$1" 2>/dev/null; continue; fi
-        sleep 0.1
-    done
-    return 1
-}
-
 # end_launched PID: ends the runner this script launched as local PID, whatever state it reached.
 end_launched() {
     local windows_pid

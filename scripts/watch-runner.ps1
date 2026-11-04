@@ -59,10 +59,16 @@ function Remove-OwnStateFile {
 }
 
 $watcher = Start-Process -FilePath $venvPython -ArgumentList @('-m', 'graphify', 'watch', "`"$TargetPath`"") -NoNewWindow -PassThru
+<#
+.NOTES
+    A state file that is there but names no valid pid is taken as being rewritten in place, as a hook
+    may, and ends nothing; only a missing file or another valid pid does.
+#>
 function Test-IsSuperseded {
     if (-not $Persistent) { return $false }
+    if (-not (Test-Path $stateFile)) { return $true }
     $state = Read-WatcherState $stateFile
-    return -not $state -or [int64]$state.pid -ne $PID
+    return [bool]$state -and [int64]$state.pid -ne $PID
 }
 
 $misses = 0

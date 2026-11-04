@@ -111,6 +111,35 @@ write_state() {
         mv -f "$1.tmp" "$1"
 }
 
+## The watch lock: one watch of a project at a time, in either CLI, since two would each start a runner.
+
+# is_stale_lock FOLDER: the lock is older than a minute, so a watch that was killed left it.
+is_stale_lock() { [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }
+
+# break_stale_lock FOLDER: renames the lock to a name of this process's own before removing it, so of
+# two watches breaking the same stale lock only one takes it. One that took a fresh lock instead, made
+# by the other in between, puts it back.
+break_stale_lock() {
+    local aside="$1.broken.$$.$RANDOM"
+    mv -T "$1" "$aside" 2>/dev/null || return 0
+    if is_stale_lock "$aside"; then
+        rmdir "$aside" 2>/dev/null
+    else
+        mv -T "$aside" "$1" 2>/dev/null || rmdir "$aside" 2>/dev/null
+    fi
+    return 0
+}
+
+# acquire_lock FOLDER: takes the lock within 15 s; mkdir is atomic.
+acquire_lock() {
+    for _ in $(seq 150); do
+        mkdir "$1" 2>/dev/null && return 0
+        if is_stale_lock "$1"; then break_stale_lock "$1"; continue; fi
+        sleep 0.1
+    done
+    return 1
+}
+
 ## Which process a pid is. Every comparison is of whole arguments, never of substrings: /w/app must not
 ## match a watcher of /w/app2 or of a folder below /w/app, nor this venv another checkout's.
 
