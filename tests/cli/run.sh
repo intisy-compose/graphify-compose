@@ -947,6 +947,24 @@ check "graphify ends" wait_for local_dead "$graphify"
 check "its state file is gone" wait_for state_file_count_is 0
 finish
 
+begin "a runner keeps going while its state file is unreadable, and ends once it names another pid"
+with_short_checks
+start_watcher
+runner=$(state_pid)
+file=$(state_files | head -n 1)
+printf '{"path": "half a rewr' >"$file"
+"$REAL_SLEEP" 3
+check "a half-written file ends nothing" alive "$runner"
+: >"$file"
+"$REAL_SLEEP" 3
+check "nor an empty one" alive "$runner"
+printf '{"path": "x", "pid": 1, "refs": 1}' >"$file"
+"$REAL_SLEEP" 3
+check "nor a pid below 2" alive "$runner"
+printf '{"path": "x", "pid": %s, "refs": 1, "persistent": true}' "$((runner + 1))" >"$file"
+check "a different valid pid ends it" wait_for dead "$runner"
+finish
+
 ## the watch lock
 
 lock_folder() { echo "$stack/.watchers/project.lock"; }
