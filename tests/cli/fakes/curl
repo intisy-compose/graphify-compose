@@ -2,10 +2,39 @@
 # Stands in for curl: appends "curl ARGUMENTS" to $FAKE_DOCKER_DIR/calls and answers the status code
 # from the fake's state: mcp-status for :8770, candidate-status for :18770 (default 401 each). 000
 # answers as a refused connection does, with exit 7.
+# The Tailscale API is logged as "curl URL HEADER", the header read from curl's config on stdin, and
+# answered from tailnet-devices ("NODE_ID NAME" per line): a DELETE of one in it answers 200 and
+# removes it, of any other 404; tailnet-status, when present, is answered to every API call instead.
+# A token on the command line, where every user of the host can read it, exits 99 instead.
 set -uo pipefail
 state=${FAKE_DOCKER_DIR:?}
-printf 'curl %s\n' "$*" >>"$state/calls"
+for argument in "$@"; do
+    case "$argument" in
+        *Bearer* | *tskey-*)
+            printf 'curl CREDENTIAL ON ARGV %s\n' "$argument" >>"$state/calls"
+            exit 99 ;;
+    esac
+done
 url=${!#}
+case "$url" in
+    https://api.tailscale.com/api/v2/device/*)
+        header=$(sed -n 's/^header = "\(.*\)"$/\1/p')
+        printf 'curl %s %s\n' "$url" "$header" >>"$state/calls"
+        node=${url##*/}
+        if [ -e "$state/tailnet-status" ]; then
+            status=$(cat "$state/tailnet-status")
+        elif grep -q "^$node " "$state/tailnet-devices" 2>/dev/null; then
+            grep -v "^$node " "$state/tailnet-devices" >"$state/tailnet-devices.next"
+            mv "$state/tailnet-devices.next" "$state/tailnet-devices"
+            status=200
+        else
+            status=404
+        fi
+        printf '%s' "$status"
+        [ "$status" != 000 ] || exit 7
+        exit 0 ;;
+esac
+printf 'curl %s\n' "$*" >>"$state/calls"
 case "$url" in
     *:18770/*) status=$(cat "$state/candidate-status" 2>/dev/null || echo 401) ;;
     *) status=$(cat "$state/mcp-status" 2>/dev/null || echo 401) ;;

@@ -18,6 +18,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 # Git Bash on Windows: docker.exe needs a Windows path here, and must get container paths unrewritten.
 if [ -n "${MSYSTEM:-}" ]; then here=$(cd "$here" && pwd -W); export MSYS_NO_PATHCONV=1; fi
 
+# shellcheck source=gateway/tailnet-node.sh
+. "$here/gateway/tailnet-node.sh"
+
 env_file="$here/.env"
 compose=(docker compose --project-directory "$here" --env-file "$env_file")
 image=graphify-server:latest
@@ -36,7 +39,8 @@ fail() { err "$*"; exit 1; }
 
 usage() {
     cat <<'EOF'
-Usage: ./docker-compose.sh [down|healthcheck|logs|rebuild|regraph|relock|restart|up|watch|watch-list|watch-stop]
+Usage: ./docker-compose.sh [delete|down|healthcheck|logs|rebuild|regraph|relock|restart|up|watch|watch-list|watch-stop]
+  delete       Down, then remove the stack's node from the tailnet (with TS_API_TOKEN) and data/tailscale; for a stack being removed
   down         Stop and remove everything
   healthcheck  Restart the containers if the host port proxy dropped
   logs         Follow logs
@@ -257,12 +261,24 @@ invoke_down() {
     "${compose[@]}" down
 }
 
+# invoke_delete: how the stack is deleted: down, then its node leaves the tailnet and data/tailscale
+# goes, so a later up joins fresh. Removing the folder afterwards is the human's step.
+invoke_delete() {
+    local node_name
+    invoke_down || fail "docker compose down failed, so the node stays in the tailnet."
+    node_name=$(env_value GRAPHIFY_HOST)
+    [ -n "$node_name" ] || node_name=$(env_value TS_HOSTNAME)
+    remove_tailnet_identity "$here/data/tailscale" "${node_name:-graphify}" "$env_file" || exit 1
+    ok "Deleted. Remove this folder to finish."
+}
+
 cd "$here"
 command=$(printf '%s' "${1-up}" | tr '[:upper:]' '[:lower:]')
 [ $# -eq 0 ] || shift
 case "$command" in
     up)          no_options "$@"; invoke_up ;;
     down)        no_options "$@"; invoke_down ;;
+    delete)      no_options "$@"; invoke_delete ;;
     restart)     no_options "$@"; invoke_recreate ;;
     rebuild)     no_options "$@"; assert_setup; invoke_safe_rebuild ;;
     relock)      [ $# -le 1 ] && [[ ${1:-} != -* ]] || usage; invoke_relock "$@" ;;
