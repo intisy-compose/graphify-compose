@@ -7,7 +7,7 @@
 #   server-running     true | false | missing (default true): graphify-server's State.Running
 #   server-states      lines of the same words, answered one per check before server-running is
 #   candidate-running  true | false (default true): graphify-candidate's State.Running
-#   info-exit, build-exit, relock-exit, tailscale-exit: exit codes (default 0)
+#   info-exit, build-exit, relock-exit, tailscale-exit, down-exit: exit codes (default 0)
 # `compose down` notes in down-saw-watcher whether the fake graphify watch still ran at that moment.
 
 state_value() { cat "$state/$1" 2>/dev/null || echo "${2:-}"; }
@@ -53,7 +53,7 @@ answer() {
         "compose exec -T tailscale "*) answer_tailnet_status ;;
         "compose build graphify") return "$(state_value build-exit 0)" ;;
         "compose up -d tailscale") return "$(state_value tailscale-exit 0)" ;;
-        "compose down") note_watcher_at_down ;;
+        "compose down") note_watcher_at_down; return "$(state_value down-exit 0)" ;;
         *) return 0 ;;
     esac
 }

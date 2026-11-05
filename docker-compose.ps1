@@ -6,7 +6,9 @@ $forwarded = $args
 
 Set-StrictMode -Version Latest
 
-$envFile        = Join-Path $PSScriptRoot ".env"
+. (Join-Path $PSScriptRoot "gateway\tailnet-node.ps1")
+
+$envFile       = Join-Path $PSScriptRoot ".env"
 $image          = "graphify-server:latest"
 $previousImage  = "graphify-server:previous"
 $candidateName  = "graphify-candidate"
@@ -188,9 +190,26 @@ function Invoke-Relock([string]$Commit) {
     Write-Host "  graphify commit so the watchers and the server stay in step."
 }
 
+<#
+.SYNOPSIS
+How the stack is deleted: down, then its node leaves the tailnet and data\tailscale goes, so a later up
+joins fresh. Removing the folder afterwards is the human's step.
+#>
+function Invoke-Delete {
+    Write-Step "Stopping everything..."
+    Stop-AllWatchers
+    docker compose down
+    if ($LASTEXITCODE -ne 0) { Write-Err "docker compose down failed, so the node stays in the tailnet."; exit 1 }
+    $values = Read-Env
+    $nodeName = if ($values["GRAPHIFY_HOST"]) { $values["GRAPHIFY_HOST"] } elseif ($values["TS_HOSTNAME"]) { $values["TS_HOSTNAME"] } else { "graphify" }
+    if (-not (Remove-TailnetIdentity (Join-Path $PSScriptRoot "data\tailscale") $nodeName $envFile)) { exit 1 }
+    Write-OK "Deleted. Remove this folder to finish."
+}
+
 $usage = @{
     "up"          = "Start the stack, building the image only if it is missing (default)"
     "down"        = "Stop and remove everything"
+    "delete"      = "Down, then remove the stack's node from the tailnet (with TS_API_TOKEN) and data\tailscale; for a stack being removed"
     "restart"     = "Recreate the stack from the current image"
     "rebuild"     = "Rebuild the pinned image, test it, and only then switch to it"
     "relock"      = "[<commit>]  re-resolve image\requirements.lock (optionally for a new graphify commit)"
@@ -210,6 +229,7 @@ Set-Location $PSScriptRoot
 switch ($Command.ToLower()) {
     "up"      { Assert-Setup; Connect-Tailnet; Write-Step "Starting graphify..."; docker compose up -d; Show-Urls; break }
     "down"    { Write-Step "Stopping everything..."; Stop-AllWatchers; docker compose down; break }
+    "delete"  { Invoke-Delete; break }
     "restart" { Assert-Setup; Connect-Tailnet; Write-Step "Recreating..."; docker compose up -d --force-recreate; Show-Urls; break }
     "rebuild" { Assert-Setup; Invoke-SafeRebuild; break }
     "relock"  { Invoke-Relock $(if ($forwarded) { "$($forwarded[0])" } else { "" }); break }
