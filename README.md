@@ -45,6 +45,7 @@ Copy `.env.example` to `.env` (gitignored) and set:
 | `PROJECTS_ROOT` | Absolute path to the folder of projects, mounted read-only at `/projects`. |
 | `TS_AUTHKEY` | Tailscale auth key for the explorer node's first join; without it the explorers are on localhost only. |
 | `GRAPHIFY_HOST` | The node's ts.net name, written by `up` once it has joined. |
+| `TS_API_TOKEN` | Optional Tailscale API access token; `delete` removes the node with it. |
 
 ## Auto-graph on session start (optional)
 
@@ -108,6 +109,21 @@ graphify whose runner was killed outright is found by its arguments (this stack'
 `healthcheck` exists for Docker Desktop, whose port proxy can stop forwarding while the container
 stays up; on a Docker Engine host the endpoint answers and it does nothing. Nothing runs it on a
 schedule, because a scheduled task would outlive the stack.
+
+## Deleting the stack
+
+`down` keeps the explorer's node in the tailnet, so the next `up` comes back under the same name. To
+remove the stack for good, run `.\docker-compose.ps1 delete` (`./docker-compose.sh delete` on
+Linux), then remove the folder. `delete` does everything `down` does, watchers included, then
+removes the node from the tailnet and removes `data/tailscale`, so a later `up` joins fresh. It finds
+the node by the stable node ID in `data/tailscale/tailscaled.state`, never by its name, so another
+device named `graphify` stays.
+
+The removal goes through the Tailscale API with `TS_API_TOKEN` from `.env`: an access token from
+[Settings, Keys](https://login.tailscale.com/admin/settings/keys) of an account that may remove
+devices (Owner, Admin or IT admin). Without one, `delete` prints the node's name and ID to remove on
+the [Machines page](https://login.tailscale.com/admin/machines) instead. When the API refuses or does
+not answer, `data/tailscale` stays and `delete` can run again.
 
 ## The host venv
 
